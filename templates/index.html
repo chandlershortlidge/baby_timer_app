@@ -1,21 +1,23 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Baby Timer App</title>
-</head>
-<body>
-    <h1>Welcome to the Baby Timer App!</h1>
+{% extends "base.html" %}
 
-    <form action="/plan_naps" method="post">
-        <label for="date">Date:</label><br>
-        <input type="date" id="date" name="date" required><br><br>
+{% block content %}
+<div class="flex-grow flex flex-col justify-center items-center">
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Welcome!</h1>
 
-        <label for="num_naps">Number of Naps:</label><br>
-        <input type="number" id="num_naps" name="num_naps" min="1" required><br><br>
+        <form action="/plan_naps" method="post" class="space-y-4">
+            <div>
+                <label for="date" class="block text-sm font-medium text-gray-700">Date:</label>
+                <input type="date" id="date" name="date" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            </div>
 
-        <input type="submit" value="Plan Naps">
-    </form>
-</body>
-</html>
+            <div>
+                <label for="num_naps" class="block text-sm font-medium text-gray-700">Number of Naps:</label>
+                <input type="number" id="num_naps" name="num_naps" min="1" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            </div>
+
+            <input type="submit" value="Plan Naps" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer">
+        </form>
+    </div>
+</div>
+{% endblock %}

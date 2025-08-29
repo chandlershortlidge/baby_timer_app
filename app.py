@@ -10,8 +10,7 @@ def index():
 def plan_naps():
     date = request.form.get('date')
     num_naps = request.form.get('num_naps')
-    # For now, just display the submitted data to confirm it works
-    return f"Date received: {date}, Number of naps: {num_naps}"
+    return render_template('plan.html', date=date, num_naps=num_naps)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5002)

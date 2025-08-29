@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baby Sleep Timer</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+    <!-- Flask url_for links the static files -->
+    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"> -->
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-blue-50/30">
+    <div class="container mx-auto p-4 max-w-md min-h-screen flex flex-col">
+        {% block content %}{% endblock %}
+    </div>
+    <!-- <script src="{{ url_for('static', filename='js/script.js') }}"></script> -->
+</body>
+</html>
