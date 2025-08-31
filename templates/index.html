@@ -21,11 +21,22 @@
         <p id="next-nap-time" class="text-4xl font-extrabold text-yellow-800">9:30 AM</p>
     </div>
 
-    <!-- Large Action Buttons -->
+    <!-- Nap Controls -->
     <div class="mt-8 space-y-4">
-        <button id="start-nap-btn" class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
-            Start Nap Timer
-        </button>
+        <div id="nap-action-section" class="text-center">
+            <button id="nap-control-btn" class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
+                Start Nap
+            </button>
+            <!-- Nap Timer (initially hidden) -->
+            <div id="nap-timer-container" class="mt-4">
+                <p id="nap-timer-display" class="text-7xl font-bold text-gray-800 tracking-tighter">45:00</p>
+                <p id="nap-reminder-indicator" class="text-sm text-gray-500 mt-2">
+                    Reminder: Alarm sounds 
+                    <a href="#" class="underline font-semibold text-blue-600">1 minute</a> 
+                    before nap ends.
+                </p>
+            </div>
+        </div>
         <button id="plan-nap-btn" class="w-full bg-blue-50 text-blue-700 font-bold py-4 px-6 rounded-2xl shadow-lg border border-blue-200 hover:bg-blue-100 transition-colors">
             Plan Nap Schedule
         </button>
@@ -49,8 +60,29 @@
         </div>
         
         <!-- This is a placeholder for the detailed schedule, which will be populated dynamically -->
-        <ul id="schedule-list" class="mt-4 space-y-2 hidden">
-            <!-- Schedule items will be dynamically added here -->
+        <ul id="schedule-list" class="mt-6 space-y-3 hidden">
+            <!-- Example Schedule Item 1 -->
+            <li class="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                <div class="flex items-center space-x-4">
+                    <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                    <div>
+                        <p class="font-semibold text-gray-800">9:30 AM <span class="text-sm font-normal text-gray-500">(45 min)</span></p>
+                        <p class="text-xs text-green-600 font-medium">Upcoming</p>
+                    </div>
+                </div>
+                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
+            </li>
+            <!-- Example Schedule Item 2 -->
+            <li class="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                <div class="flex items-center space-x-4">
+                    <div class="w-2 h-2 rounded-full bg-blue-400"></div>
+                    <div>
+                        <p class="font-semibold text-gray-800">1:00 PM <span class="text-sm font-normal text-gray-500">(1 hr 30 min)</span></p>
+                        <p class="text-xs text-blue-600 font-medium">Upcoming</p>
+                    </div>
+                </div>
+                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
+            </li>
         </ul>
     </div>
 </main>

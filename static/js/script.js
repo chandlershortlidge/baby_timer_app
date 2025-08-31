@@ -43,39 +43,90 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // --- Start Nap Timer Logic ---
-    const startNapBtn = document.getElementById('start-nap-btn');
-    if (startNapBtn) {
-        startNapBtn.addEventListener('click', () => {
-            console.log('Start Nap Timer button clicked');
-            // Send a POST request to the /log_nap endpoint
+    // --- Nap Controls Logic ---
+    const napControlBtn = document.getElementById('nap-control-btn');
+    const napTimerContainer = document.getElementById('nap-timer-container');
+    const napTimerDisplay = document.getElementById('nap-timer-display');
+
+    let isNapActive = false;
+    let napTimerInterval = null;
+    let napEndTime = 0;
+    const NAP_DURATION_MS = 45 * 60 * 1000; // 45 minutes for now
+
+    function resetTimerDisplay() {
+        const minutes = Math.floor((NAP_DURATION_MS % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((NAP_DURATION_MS % (1000 * 60)) / 1000);
+        napTimerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function updateTimerDisplay() {
+        const now = Date.now();
+        const timeLeft = napEndTime - now;
+
+        if (timeLeft <= 0) {
+            napTimerDisplay.textContent = '00:00';
+            stopNap(false); // Stop without logging a user event
+            alert("Nap time is over!");
+            return;
+        }
+
+        const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+
+        napTimerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function startNap() {
+        isNapActive = true;
+
+        // Update button to "Stop Nap"
+        napControlBtn.textContent = 'Stop Nap';
+        napControlBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
+        napControlBtn.classList.add('bg-red-500', 'hover:bg-red-600');
+
+        // Start timer
+        napEndTime = Date.now() + NAP_DURATION_MS;
+        updateTimerDisplay(); // Initial display to avoid 1s delay
+        napTimerInterval = setInterval(updateTimerDisplay, 1000);
+
+        // Log start event to backend
+        fetch('/log_nap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: 'start_nap', timestamp: new Date().toISOString() }),
+        }).then(res => res.json()).then(data => console.log('Start nap logged:', data)).catch(console.error);
+    }
+
+    function stopNap(logEvent = true) {
+        isNapActive = false;
+        clearInterval(napTimerInterval);
+        napTimerInterval = null;
+
+        // Update button to "Start Nap"
+        napControlBtn.textContent = 'Start Nap';
+        napControlBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
+        napControlBtn.classList.add('bg-green-500', 'hover:bg-green-600');
+
+        // Reset timer display
+        resetTimerDisplay();
+
+        // Log stop event to backend if triggered by user
+        if (logEvent) {
             fetch('/log_nap', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    event: 'start_nap',
-                    timestamp: new Date().toISOString(),
-                }),
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Success:', data);
-                // Here you could update the UI, for example, by changing the status card
-                alert('Nap timer started! (Check console for details)');
-            })
-            .catch((error) => {
-                console.error('Error:', error);
-                alert('Failed to start nap timer.');
-            });
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event: 'stop_nap', timestamp: new Date().toISOString() }),
+            }).then(res => res.json()).then(data => console.log('Stop nap logged:', data)).catch(console.error);
+        }
+    }
+
+    if (napControlBtn) {
+        resetTimerDisplay(); // Set initial timer value on page load
+        napControlBtn.addEventListener('click', () => {
+            isNapActive ? stopNap() : startNap();
         });
     }
+
 
     // --- Schedule Toggle Logic ---
     const scheduleHeader = document.getElementById('schedule-header');
@@ -83,9 +134,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
 
     if (scheduleHeader && scheduleList && scheduleToggleIcon) {
+        // Toggle visibility on header click
         scheduleHeader.addEventListener('click', () => {
             scheduleList.classList.toggle('hidden');
             scheduleToggleIcon.classList.toggle('rotate-180');
+        });
+
+        // Handle editing within the list using event delegation
+        scheduleList.addEventListener('click', (event) => {
+            if (event.target.classList.contains('edit-nap-btn')) {
+                alert('Edit button clicked! (Functionality to be implemented)');
+                // Next step: Open a modal or inline form to edit the nap.
+            }
         });
     }
 });
