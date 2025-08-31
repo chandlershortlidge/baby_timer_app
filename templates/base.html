@@ -1,23 +1,109 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Baby Sleep Timer</title>
-    <!-- Tailwind CSS CDN for styling -->
+    <title>Baby Timer App</title>
+    <!-- Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-    </style>
-    <!-- Flask url_for links the static files -->
-    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"> -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body class="bg-gradient-to-br from-gray-50 to-blue-50/30">
-    <div class="container mx-auto p-4 max-w-md min-h-screen flex flex-col">
-        {% block content %}{% endblock %}
+    <div class="max-w-md mx-auto min-h-screen">
+        <div class="p-6 space-y-8 pb-12">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  {% if category == 'error' %}
+                    <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-100" role="alert">
+                      {{ message }}
+                    </div>
+                  {% else %}
+                    <div class="p-4 mb-4 text-sm text-green-800 rounded-lg bg-green-100" role="alert">
+                      {{ message }}
+                    </div>
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </div>
     </div>
-    <!-- <script src="{{ url_for('static', filename='js/script.js') }}"></script> -->
+    
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // --- Nap Plan Modal Logic ---
+        const planNapBtn = document.getElementById('plan-nap-btn');
+        const planNapModal = document.getElementById('plan-nap-modal');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+
+        if (planNapBtn && planNapModal) {
+            // Show modal on "Plan Nap Schedule" button click
+            planNapBtn.addEventListener('click', () => {
+                planNapModal.classList.remove('hidden');
+            });
+        }
+
+        if (closeModalBtn && planNapModal) {
+            // Hide modal on "Cancel" button click
+            closeModalBtn.addEventListener('click', () => {
+                planNapModal.classList.add('hidden');
+            });
+        }
+
+        // Hide modal on clicking the background overlay
+        if (planNapModal) {
+            planNapModal.addEventListener('click', (event) => {
+                // We check if the click is on the modal background itself, not on its children
+                if (event.target === planNapModal) {
+                    planNapModal.classList.add('hidden');
+                }
+            });
+        }
+
+        // --- Start Nap Timer Logic ---
+        const startNapBtn = document.getElementById('start-nap-btn');
+        if (startNapBtn) {
+            startNapBtn.addEventListener('click', () => {
+                // Send a POST request to the /log_nap endpoint
+                fetch('/log_nap', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        event: 'start_nap',
+                        timestamp: new Date().toISOString(),
+                    }),
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    alert('Nap timer started! (Check console for details)');
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                    alert('Failed to start nap timer.');
+                });
+            });
+        }
+
+        // --- Schedule Toggle Logic ---
+        const scheduleHeader = document.getElementById('schedule-header');
+        const scheduleList = document.getElementById('schedule-list');
+        const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
+
+        if (scheduleHeader && scheduleList && scheduleToggleIcon) {
+            scheduleHeader.addEventListener('click', () => {
+                scheduleList.classList.toggle('hidden');
+                scheduleToggleIcon.classList.toggle('rotate-180');
+            });
+        }
+    });
+    </script>
 </body>
 </html>
