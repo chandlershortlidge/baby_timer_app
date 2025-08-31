@@ -2,6 +2,18 @@ console.log("script.js file is loaded by the browser.");
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOM fully loaded and parsed. Attaching event listeners.");
+
+    // --- Bedtime Button Logic ---
+    const bedtimeBtn = document.getElementById('bedtime-btn');
+    if (bedtimeBtn) {
+        bedtimeBtn.addEventListener('click', () => {
+            console.log('Bedtime button clicked');
+            // In the future, this will send a request to the backend
+            // to log bedtime or wake-up time and update the UI.
+            alert('Bedtime button clicked! (Functionality to be implemented)');
+        });
+    }
+
     // --- Nap Plan Modal Logic ---
     const planNapBtn = document.getElementById('plan-nap-btn');
     const planNapModal = document.getElementById('plan-nap-modal');
