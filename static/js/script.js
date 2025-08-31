@@ -16,42 +16,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 bedtimeBtn.textContent = 'End Bedtime';
                 bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
                 bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
-                console.log('Bedtime started');
+                console.log('Bedtime started (night sleep)');
+                // In the future, this will call: POST /api/day/bedtime { type: "sleep" }
             } else {
                 // --- Change back to "Start Bedtime" state ---
-                bedtimeBtn.textContent = 'Start Bedtime';
+                bedtimeBtn.textContent = 'Start Bedtime'; // Or maybe "New Day Started"
                 bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
                 bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-                console.log('Bedtime ended');
-            }
-        });
-    }
+                console.log('Bedtime ended (morning wake up)');
 
-    // --- Nap Plan Modal Logic ---
-    const planNapBtn = document.getElementById('plan-nap-btn');
-    const planNapModal = document.getElementById('plan-nap-modal');
-    const closeModalBtn = document.getElementById('close-modal-btn');
-
-    if (planNapBtn && planNapModal) {
-        // Show modal on "Plan Nap Schedule" button click
-        planNapBtn.addEventListener('click', () => {
-            planNapModal.classList.remove('hidden');
-        });
-    }
-
-    if (closeModalBtn && planNapModal) {
-        // Hide modal on "Cancel" button click
-        closeModalBtn.addEventListener('click', () => {
-            planNapModal.classList.add('hidden');
-        });
-    }
-
-    // Hide modal on clicking the background overlay
-    if (planNapModal) {
-        planNapModal.addEventListener('click', (event) => {
-            // We check if the click is on the modal background itself, not on its children
-            if (event.target === planNapModal) {
-                planNapModal.classList.add('hidden');
+                // This is the crucial call to set firstWakeAt
+                fetch('/api/day/bedtime', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'wake', timestamp: new Date().toISOString() })
+                })
+                .then(res => res.json())
+                .then(data => console.log('Wake time logged:', data))
+                .catch(console.error);
             }
         });
     }
@@ -102,12 +84,14 @@ document.addEventListener('DOMContentLoaded', function() {
         updateTimerDisplay(); // Initial display to avoid 1s delay
         napTimerInterval = setInterval(updateTimerDisplay, 1000);
 
-        // Log start event to backend
-        fetch('/log_nap', {
+        // Log start event to backend using the new API
+        // Placeholder: We need a way to know which nap index this is.
+        const napIndex = 1; 
+        fetch('/api/naps/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event: 'start_nap', timestamp: new Date().toISOString() }),
-        }).then(res => res.json()).then(data => console.log('Start nap logged:', data)).catch(console.error);
+            body: JSON.stringify({ index: napIndex, timestamp: new Date().toISOString() }),
+        }).then(res => res.json()).then(data => console.log('API /api/naps/start response:', data)).catch(console.error);
     }
 
     function stopNap(logEvent = true) {
@@ -125,11 +109,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Log stop event to backend if triggered by user
         if (logEvent) {
-            fetch('/log_nap', {
+            // Placeholder: We need a way to know which nap index this is.
+            const napIndex = 1;
+            fetch('/api/naps/stop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ event: 'stop_nap', timestamp: new Date().toISOString() }),
-            }).then(res => res.json()).then(data => console.log('Stop nap logged:', data)).catch(console.error);
+                body: JSON.stringify({ index: napIndex, timestamp: new Date().toISOString() }),
+            }).then(res => res.json()).then(data => console.log('API /api/naps/stop response:', data)).catch(console.error);
         }
     }
 

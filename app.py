@@ -7,17 +7,38 @@ DB_FILE = 'nap_plans.db'
 
 def create_db():
     """
-    Creates the SQLite database and the nap_plans table if they don't exist.
+    Creates the SQLite database and tables if they don't exist.
+    This new schema is more robust and supports dynamic adjustments.
     """
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # Drop old table for a clean slate during development.
+    # In a production migration, you'd use ALTER TABLE or a migration script.
+    c.execute('DROP TABLE IF EXISTS nap_plans')
+
+    # The 'days' table is the central record for a single day's schedule.
     c.execute('''
-        CREATE TABLE IF NOT EXISTS nap_plans (
+        CREATE TABLE IF NOT EXISTS days (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            number_of_naps INTEGER,
-            nap_durations TEXT,
-            wake_time TEXT
+            date TEXT NOT NULL UNIQUE,
+            first_wake_at TEXT,
+            daily_awake_budget_sec INTEGER,
+            projected_bedtime_at TEXT
+        )
+    ''')
+
+    # 'nap_slots' holds the plan and actuals for each individual nap.
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS nap_slots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_id INTEGER NOT NULL,
+            nap_index INTEGER NOT NULL,
+            planned_duration_sec INTEGER NOT NULL,
+            adjusted_duration_sec INTEGER,
+            actual_start_at TEXT,
+            actual_end_at TEXT,
+            status TEXT NOT NULL DEFAULT 'upcoming',
+            FOREIGN KEY (day_id) REFERENCES days (id)
         )
     ''')
     conn.commit()
@@ -40,58 +61,62 @@ def create_app():
         """
         return render_template('index.html')
 
-    @app.route('/plan_naps', methods=['POST'])
-    def plan_naps():
+    # --- New API Endpoints ---
+
+    @app.route('/api/day/today', methods=['GET'])
+    def get_today():
         """
-        Handles POST requests to plan nap schedules.
-        Validates form data and renders the plan confirmation.
+        Fetches the complete schedule for the current day.
+        (Implementation to follow)
         """
-        date_str = request.form.get('date')
-        num_naps_str = request.form.get('num_naps')
+        # Placeholder response
+        return {"message": "Endpoint for getting today's schedule"}
 
-        if not date_str or not num_naps_str:
-            flash("Please provide both a date and the number of naps.", "error")
-            return redirect(url_for("index"))
-
-        try:
-            num_naps = int(num_naps_str)
-            if num_naps < 1:
-                raise ValueError()
-        except ValueError:
-            flash("Please enter a valid, positive number for naps.", "error")
-            return redirect(url_for("index"))
-
-        try:
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            date = date_obj.strftime("%A, %B %d, %Y")
-        except ValueError:
-            flash("Please enter a valid date.", "error")
-            return redirect(url_for("index"))
-
-        try:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO nap_plans (date, number_of_naps) VALUES (?, ?)",
-                (date_str, num_naps),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        flash(f"Successfully created a plan for {date} with {num_naps} nap(s).", "success")
-        return redirect(url_for("index"))
-
-    @app.route('/log_nap', methods=['POST'])
-    def log_nap():
+    @app.route('/api/day/bedtime', methods=['POST'])
+    def log_bedtime():
         """
-        Handles POST requests to log nap events.
-        For now, just prints the form data to the console.
+        Logs the start of nighttime sleep or the morning wake-up ('firstWakeAt').
         """
         data = request.json
-        print("Received data from client:", data)
-        # You would add code here to save to the database later
-        return {"status": "success", "message": "Nap event logged successfully"}
+        event_type = data.get('type')
+        timestamp = data.get('timestamp')
+
+        if event_type == 'wake' and timestamp:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                # Use "UPSERT" to either insert a new day or update the existing one
+                c.execute('''
+                    INSERT INTO days (date, first_wake_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(date) DO UPDATE SET first_wake_at = excluded.first_wake_at
+                ''', (today_str, timestamp))
+                conn.commit()
+                return {"status": "success", "message": f"Wake time for {today_str} logged as {timestamp}."}
+            except sqlite3.Error as e:
+                print(f"Database error: {e}")
+                return {"status": "error", "message": "Failed to log wake time."}, 500
+            finally:
+                if conn:
+                    conn.close()
+        
+        # Placeholder for 'sleep' event type
+        return {"status": "success", "message": "Bedtime event received."}
+
+    @app.route('/api/naps/start', methods=['POST'])
+    def start_nap():
+        """Logs the start of a specific nap."""
+        data = request.json
+        print(f"Received start nap event for index: {data.get('index')}")
+        return {"status": "success", "message": "Nap start logged"}
+
+    @app.route('/api/naps/stop', methods=['POST'])
+    def stop_nap():
+        """Logs the end of a nap and triggers schedule adjustment logic."""
+        data = request.json
+        print(f"Received stop nap event for index: {data.get('index')}")
+        return {"status": "success", "message": "Nap stop logged"}
 
     return app
 

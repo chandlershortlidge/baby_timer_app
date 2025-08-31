@@ -37,9 +37,6 @@
                 </p>
             </div>
         </div>
-        <button id="plan-nap-btn" class="w-full bg-blue-50 text-blue-700 font-bold py-4 px-6 rounded-2xl shadow-lg border border-blue-200 hover:bg-blue-100 transition-colors">
-            Plan Nap Schedule
-        </button>
     </div>
 
     <!-- Today's Schedule -->
@@ -86,34 +83,4 @@
         </ul>
     </div>
 </main>
-
-<!-- Nap Plan Modal -->
-<div id="plan-nap-modal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden z-50">
-    <div class="bg-white p-6 rounded-3xl shadow-xl w-full max-w-sm">
-        <div class="text-center">
-            <h3 class="text-xl font-bold text-gray-900">Plan Nap Schedule</h3>
-            <p class="text-sm text-gray-500 mt-1">Set a new schedule for a specific day.</p>
-            <div class="mt-6">
-                <form action="{{ url_for('plan_naps') }}" method="POST" class="space-y-4">
-                    <div>
-                        <label for="date" class="text-left block text-sm font-medium text-gray-700 mb-1">Date</label>
-                        <input type="date" name="date" id="date" class="block w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" required>
-                    </div>
-                    <div>
-                        <label for="num_naps" class="text-left block text-sm font-medium text-gray-700 mb-1">Number of Naps</label>
-                        <input type="number" name="num_naps" id="num_naps" min="1" placeholder="e.g., 4" class="block w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" required>
-                    </div>
-                    <div class="pt-4 space-y-3">
-                        <button id="submit-plan-btn" type="submit" class="w-full bg-blue-500 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-blue-600 transition-colors">
-                            Create Plan
-                        </button>
-                        <button id="close-modal-btn" type="button" class="w-full bg-gray-100 text-gray-700 font-bold py-3 px-6 rounded-xl hover:bg-gray-200 transition-colors">
-                            Cancel
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
