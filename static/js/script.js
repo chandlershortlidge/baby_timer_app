@@ -5,12 +5,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Bedtime Button Logic ---
     const bedtimeBtn = document.getElementById('bedtime-btn');
+    let isBedtimeActive = false; // Track bedtime state
+
     if (bedtimeBtn) {
         bedtimeBtn.addEventListener('click', () => {
-            console.log('Bedtime button clicked');
-            // In the future, this will send a request to the backend
-            // to log bedtime or wake-up time and update the UI.
-            alert('Bedtime button clicked! (Functionality to be implemented)');
+            isBedtimeActive = !isBedtimeActive; // Toggle the state
+
+            if (isBedtimeActive) {
+                // --- Change to "End Bedtime" state ---
+                bedtimeBtn.textContent = 'End Bedtime';
+                bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+                console.log('Bedtime started');
+            } else {
+                // --- Change back to "Start Bedtime" state ---
+                bedtimeBtn.textContent = 'Start Bedtime';
+                bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+                bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                console.log('Bedtime ended');
+            }
         });
     }
 
