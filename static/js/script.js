@@ -3,6 +3,58 @@ console.log("script.js file is loaded by the browser.");
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOM fully loaded and parsed. Attaching event listeners.");
 
+    // --- Status Card Elements ---
+    const statusCard = document.getElementById('status-card');
+    const statusIconContainer = document.getElementById('status-icon-container');
+    const statusMessage = document.getElementById('status-message');
+    const nextNapContainer = document.getElementById('next-nap-container');
+    const nextEventLabel = document.getElementById('next-event-label');
+    const nextEventTime = document.getElementById('next-event-time');
+    const awakeIcon = document.getElementById('awake-icon');
+    const asleepIcon = document.getElementById('asleep-icon');
+
+    /**
+     * Updates the baby status card UI.
+     * @param {boolean} isAsleep - True if the baby is asleep, false otherwise.
+     */
+    function setBabyStatus(isAsleep) {
+        if (isAsleep) {
+            // --- Set to ASLEEP state ---
+            statusMessage.textContent = 'Baby is asleep!';
+            statusCard.classList.replace('bg-yellow-100/50', 'bg-indigo-100/50');
+            statusIconContainer.classList.replace('text-yellow-500', 'text-indigo-500');
+            statusMessage.classList.replace('text-yellow-800', 'text-indigo-800');
+            
+            // Update next event text and colors
+            nextEventLabel.textContent = 'Next wake time is';
+            nextEventTime.textContent = '10:15 AM'; // Placeholder for wake-up time
+            nextEventLabel.classList.replace('text-yellow-700', 'text-indigo-700');
+            nextEventTime.classList.replace('text-yellow-800', 'text-indigo-800');
+
+            // Toggle icons
+            awakeIcon.classList.add('hidden');
+            asleepIcon.classList.remove('hidden');
+
+        } else {
+            // --- Set to AWAKE state ---
+            statusMessage.textContent = 'Baby is awake!';
+            statusCard.classList.replace('bg-indigo-100/50', 'bg-yellow-100/50');
+            statusIconContainer.classList.replace('text-indigo-500', 'text-yellow-500');
+            statusMessage.classList.replace('text-indigo-800', 'text-yellow-800');
+
+            // Update next event text and colors
+            nextEventLabel.textContent = 'Next nap at';
+            nextEventTime.textContent = '9:30 AM'; // Placeholder for nap time
+            nextEventLabel.classList.replace('text-indigo-700', 'text-yellow-700');
+            nextEventTime.classList.replace('text-indigo-800', 'text-yellow-800');
+
+            // Toggle icons
+            awakeIcon.classList.remove('hidden');
+            asleepIcon.classList.add('hidden');
+        }
+    }
+
+
     // --- Bedtime Button Logic ---
     const bedtimeBtn = document.getElementById('bedtime-btn');
     let isBedtimeActive = false; // Track bedtime state
@@ -16,6 +68,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 bedtimeBtn.textContent = 'End Bedtime';
                 bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
                 bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+                setBabyStatus(true); // Update status to asleep
                 console.log('Bedtime started (night sleep)');
                 // In the future, this will call: POST /api/day/bedtime { type: "sleep" }
             } else {
@@ -23,6 +76,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 bedtimeBtn.textContent = 'Start Bedtime'; // Or maybe "New Day Started"
                 bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
                 bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                setBabyStatus(false); // Update status to awake
                 console.log('Bedtime ended (morning wake up)');
 
                 // This is the crucial call to set firstWakeAt
@@ -79,6 +133,7 @@ document.addEventListener('DOMContentLoaded', function() {
         napControlBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
         napControlBtn.classList.add('bg-red-500', 'hover:bg-red-600');
 
+        setBabyStatus(true); // Update status to asleep
         // Start timer
         napEndTime = Date.now() + NAP_DURATION_MS;
         updateTimerDisplay(); // Initial display to avoid 1s delay
@@ -104,6 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
         napControlBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
         napControlBtn.classList.add('bg-green-500', 'hover:bg-green-600');
 
+        setBabyStatus(false); // Update status to awake
         // Reset timer display
         resetTimerDisplay();
 
