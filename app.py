@@ -107,7 +107,7 @@ def _adjust_schedule(conn, day_id, finished_nap_index):
         conn.execute('UPDATE nap_slots SET adjusted_duration_sec = ? WHERE id = ?', (final_duration, nap['id']))
         current_app.logger.info(f"Nap {nap['nap_index']} duration adjusted to {final_duration:.0f} seconds.")
 
-def create_app():
+def create_app(test_config=None):
     """
     Application factory for the Flask app.
     """
@@ -115,6 +115,9 @@ def create_app():
     # Load configuration from the 'config.py' file. This will set app.secret_key
     # and other config variables from the Config class.
     app.config.from_object(Config)
+
+    if test_config:
+        app.config.update(test_config)
 
     # Ensure the instance folder exists. Flask does not create it automatically,
     # but it's required for our database.
