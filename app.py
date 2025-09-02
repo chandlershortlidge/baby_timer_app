@@ -2,6 +2,9 @@ import sqlite3
 from datetime import datetime
 from flask import Flask, render_template, request
 
+# Import the configuration
+from .config import Config
+
 # Define the database file
 DB_FILE = 'nap_plans.db'
 
@@ -56,11 +59,11 @@ def create_app():
     Application factory for the Flask app.
     """
     app = Flask(__name__)
-    # A secret key is required to use flash messages.
-    # In production, this should be a long, random, secret value.
-    app.secret_key = "dev"
-    create_db()
+    # Load configuration from the 'config.py' file. This will set app.secret_key
+    # and other config variables from the Config class.
+    app.config.from_object(Config)
 
+    create_db()
     @app.route('/')
     def index():
         """
