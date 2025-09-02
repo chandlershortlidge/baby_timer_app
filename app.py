@@ -1,26 +1,26 @@
+import os
 import sqlite3
 from datetime import datetime
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, current_app
 
 # Import the configuration
 from .config import Config
 
-# Define the database file
-DB_FILE = 'nap_plans.db'
-
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""
-    conn = sqlite3.connect(DB_FILE)
+    db_path = os.path.join(current_app.instance_path, current_app.config['DATABASE'])
+    conn = sqlite3.connect(db_path)
     # Return rows as objects that can be accessed by column name
     conn.row_factory = sqlite3.Row
     return conn
 
-def create_db():
+def create_db(app):
     """
     Creates the SQLite database and tables if they don't exist.
     This new schema is more robust and supports dynamic adjustments.
     """
-    conn = sqlite3.connect(DB_FILE)
+    db_path = os.path.join(app.instance_path, app.config['DATABASE'])
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     # Drop old table for a clean slate during development.
     # In a production migration, you'd use ALTER TABLE or a migration script.
@@ -58,12 +58,20 @@ def create_app():
     """
     Application factory for the Flask app.
     """
-    app = Flask(__name__)
+    app = Flask(__name__, instance_relative_config=True)
     # Load configuration from the 'config.py' file. This will set app.secret_key
     # and other config variables from the Config class.
     app.config.from_object(Config)
 
-    create_db()
+    # Ensure the instance folder exists. Flask does not create it automatically,
+    # but it's required for our database.
+    try:
+        os.makedirs(app.instance_path)
+    except OSError:
+        # Already exists or other error. Let it fail later if it's a real issue.
+        pass
+
+    create_db(app)
     @app.route('/')
     def index():
         """
