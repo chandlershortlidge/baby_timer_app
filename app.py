@@ -44,7 +44,7 @@ def create_db(app):
             day_id INTEGER NOT NULL,
             nap_index INTEGER NOT NULL,
             planned_duration_sec INTEGER NOT NULL,
-            adjusted_duration_sec INTEGER,
+            adjusted_duration_sec INTEGER, -- This will be updated by the schedule adjustment logic.
             actual_start_at TEXT,
             actual_end_at TEXT,
             status TEXT NOT NULL DEFAULT 'upcoming',
@@ -53,6 +53,59 @@ def create_db(app):
     ''')
     conn.commit()
     conn.close()
+
+def _adjust_schedule(conn, day_id, finished_nap_index):
+    """
+    Recalculates the duration of upcoming naps based on the deviation
+    of the nap that just finished.
+    """
+    # 1. Get the details of the nap that just finished
+    finished_nap_cursor = conn.execute(
+        'SELECT actual_start_at, actual_end_at, planned_duration_sec FROM nap_slots WHERE day_id = ? AND nap_index = ?',
+        (day_id, finished_nap_index)
+    )
+    finished_nap = finished_nap_cursor.fetchone()
+
+    if not all([finished_nap, finished_nap['actual_start_at'], finished_nap['actual_end_at']]):
+        # Not enough data to perform adjustment
+        current_app.logger.warning(f"Could not adjust schedule; finished nap {finished_nap_index} lacks start/end times.")
+        return
+
+    # 2. Calculate the time deviation
+    start_time = datetime.fromisoformat(finished_nap['actual_start_at'].replace('Z', '+00:00'))
+    end_time = datetime.fromisoformat(finished_nap['actual_end_at'].replace('Z', '+00:00'))
+    actual_duration_sec = (end_time - start_time).total_seconds()
+    planned_duration_sec = finished_nap['planned_duration_sec']
+
+    time_delta_sec = actual_duration_sec - planned_duration_sec
+
+    # 3. Find all upcoming naps
+    upcoming_naps_cursor = conn.execute(
+        "SELECT id, nap_index, planned_duration_sec, adjusted_duration_sec FROM nap_slots WHERE day_id = ? AND status = 'upcoming' ORDER BY nap_index",
+        (day_id,)
+    )
+    upcoming_naps = upcoming_naps_cursor.fetchall()
+
+    if not upcoming_naps:
+        current_app.logger.info("No upcoming naps to adjust.")
+        return
+
+    # 4. Distribute the time delta among upcoming naps
+    # A positive delta (long nap) means we need to shorten future naps.
+    adjustment_per_nap = time_delta_sec / len(upcoming_naps)
+    current_app.logger.info(f"Nap {finished_nap_index} was {time_delta_sec:.0f}s off plan. Adjusting {len(upcoming_naps)} upcoming naps by {-adjustment_per_nap:.0f}s each.")
+
+    for nap in upcoming_naps:
+        # The base for adjustment is the previously adjusted duration, or the original plan if never adjusted.
+        base_duration = nap['adjusted_duration_sec'] if nap['adjusted_duration_sec'] is not None else nap['planned_duration_sec']
+        # Subtract the adjustment: if nap was long (positive delta), we shorten future naps.
+        new_adjusted_duration = base_duration - adjustment_per_nap
+        # Sanity check: ensure naps are not adjusted to be too short (e.g., less than 10 minutes)
+        MIN_NAP_DURATION_SEC = 10 * 60
+        final_duration = max(MIN_NAP_DURATION_SEC, new_adjusted_duration)
+
+        conn.execute('UPDATE nap_slots SET adjusted_duration_sec = ? WHERE id = ?', (final_duration, nap['id']))
+        current_app.logger.info(f"Nap {nap['nap_index']} duration adjusted to {final_duration:.0f} seconds.")
 
 def create_app():
     """
@@ -247,8 +300,10 @@ def create_app():
                 if cursor.rowcount == 0:
                     return {"status": "error", "message": f"Nap with index {nap_index} not found for today."}, 404
 
-            # TODO: Add logic to adjust the rest of the day's schedule
-            return {"status": "success", "message": f"Nap {nap_index} stop logged."}
+                # --- Trigger schedule adjustment ---
+                _adjust_schedule(conn, day_id, nap_index)
+
+            return {"status": "success", "message": f"Nap {nap_index} stop logged and schedule adjusted."}
         except sqlite3.Error as e:
             app.logger.error(f"Database error in stop_nap: {e}")
             return {"status": "error", "message": "Failed to log nap stop."}, 500
