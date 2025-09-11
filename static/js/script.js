@@ -11,12 +11,45 @@ document.addEventListener('DOMContentLoaded', function() {
         nextNap: null,
     };
 
+    // --- Centralized Event Listeners ---
+    const scheduleHeader = document.getElementById('schedule-header');
+    const scheduleList = document.getElementById('schedule-list');
+    const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
+
+    if (scheduleHeader) {
+        scheduleHeader.addEventListener('click', () => {
+            scheduleList.classList.toggle('hidden');
+            scheduleToggleIcon.classList.toggle('rotate-180');
+        });
+    }
+
+    if (scheduleList) {
+        scheduleList.addEventListener('click', (event) => {
+            if (event.target.classList.contains('edit-nap-btn')) {
+                const napIndex = parseInt(event.target.dataset.napIndex, 10);
+                const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
+                if (napToEdit) {
+                    openEditModal(napToEdit);
+                }
+            }
+        });
+    }
+
     /**
      * Fetches the schedule for today from the backend.
      */
     async function fetchTodaySchedule() {
         try {
             const response = await fetch('/api/day/today');
+
+            // This is the important check
+            if (!response.ok) {
+                // Handle non-successful responses (e.g., 500 server error)
+                console.error("Server responded with an error:", response.status);
+                // Optionally, update the UI to show a generic error message
+                return;
+            }
+            
             const data = await response.json();
 
             // The backend returns a 200 OK with a "not_found" status if no schedule exists
@@ -366,31 +399,6 @@ document.addEventListener('DOMContentLoaded', function() {
         napControlBtn.addEventListener('click', () => {
             // The action now depends on the appState, not a local variable
             appState.currentNap ? stopNap() : startNap();
-        });
-    }
-
-
-    // --- Schedule Toggle Logic ---
-    const scheduleHeader = document.getElementById('schedule-header');
-    const scheduleList = document.getElementById('schedule-list');
-    const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
-
-    if (scheduleHeader && scheduleList && scheduleToggleIcon) {
-        // Toggle visibility on header click
-        scheduleHeader.addEventListener('click', () => {
-            scheduleList.classList.toggle('hidden');
-            scheduleToggleIcon.classList.toggle('rotate-180');
-        });
-
-        // Handle editing within the list using event delegation
-        scheduleList.addEventListener('click', (event) => {
-            if (event.target.classList.contains('edit-nap-btn')) {
-                const napIndex = parseInt(event.target.dataset.napIndex, 10);
-                const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
-                if (napToEdit) {
-                    openEditModal(napToEdit);
-                }
-            }
         });
     }
 

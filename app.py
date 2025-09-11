@@ -356,6 +356,10 @@ def create_app(test_config=None):
         except sqlite3.Error as e:
             app.logger.error(f"Database error in update_nap: {e}")
             return {"status": "error", "message": "Failed to update nap."}, 500
+        finally:
+            # This is the crucial part that was missing
+            if conn:
+                conn.close()
 
     return app
 
