@@ -3,6 +3,47 @@ console.log("script.js file is loaded by the browser.");
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOM fully loaded and parsed. Attaching event listeners.");
 
+    // --- State Management ---
+    let appState = {
+        day: null,
+        naps: [],
+        currentNap: null,
+        nextNap: null,
+    };
+
+    /**
+     * Fetches the schedule for today from the backend.
+     */
+    async function fetchTodaySchedule() {
+        try {
+            const response = await fetch('/api/day/today');
+            const data = await response.json();
+
+            // The backend returns a 200 OK with a "not_found" status if no schedule exists
+            if (data.status === 'not_found') {
+                console.log("No schedule found for today. Ready to start a new day.");
+                // TODO: Update UI to show a "Start Day" message
+                return;
+            }
+
+            console.log("Received schedule data:", data);
+            
+            // Store the data in our state object
+            appState.day = data.day;
+            appState.naps = data.naps;
+
+            // Find the current or next nap
+            appState.currentNap = appState.naps.find(nap => nap.status === 'in_progress');
+            appState.nextNap = appState.naps.find(nap => nap.status === 'upcoming');
+
+            // Now, update the UI with the new data
+            renderSchedule();
+
+        } catch (error) {
+            console.error("Failed to fetch schedule:", error);
+        }
+    }
+
     // --- Status Card Elements ---
     const statusCard = document.getElementById('status-card');
     const statusIconContainer = document.getElementById('status-icon-container');
@@ -12,6 +53,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const nextEventTime = document.getElementById('next-event-time');
     const awakeIcon = document.getElementById('awake-icon');
     const asleepIcon = document.getElementById('asleep-icon');
+
+    /**
+     * Renders the entire schedule UI based on the current appState.
+     */
+    function renderSchedule() {
+        console.log("Rendering schedule with state:", appState);
+        // This function will be built out later to update the DOM.
+    }
 
     /**
      * Updates the baby status card UI.
@@ -203,4 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    // Call this function when the DOM is loaded to get the initial state
+    fetchTodaySchedule();
 });
