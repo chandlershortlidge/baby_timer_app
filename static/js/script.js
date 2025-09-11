@@ -57,6 +57,21 @@ document.addEventListener('DOMContentLoaded', function() {
     const awakeIcon = document.getElementById('awake-icon');
     const asleepIcon = document.getElementById('asleep-icon');
 
+    // --- Constants ---
+    // Default wake windows in minutes. This can be made dynamic later.
+    const WAKE_WINDOWS_MIN = [120, 150, 150, 180]; // e.g., 2h, 2.5h, 2.5h, 3h
+
+    /**
+     * Formats a Date object into a "h:mm AM/PM" string.
+     * @param {Date} date - The date to format.
+     * @returns {string} The formatted time string.
+     */
+    function formatTime(date) {
+        if (!(date instanceof Date) || isNaN(date)) {
+            return 'N/A';
+        }
+        return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    }
     /**
      * Renders the entire schedule UI based on the current appState.
      */
@@ -78,34 +93,50 @@ document.addEventListener('DOMContentLoaded', function() {
         // This part will run only when there IS a schedule
         nextNapContainer.style.display = 'block'; // Show the time display again
 
+        // --- Calculate Projected Times ---
+        let lastEventEndTime = new Date(appState.day.first_wake_at);
+        let nextUpcomingNapTime = null;
+
         // Populate the schedule list
-        appState.naps.forEach(nap => {
+        appState.naps.forEach((nap, index) => {
             const li = document.createElement('li');
             li.className = "flex items-center justify-between p-4 bg-gray-50 rounded-xl";
 
             // Determine nap duration to display (adjusted or planned)
             const durationSec = nap.adjusted_duration_sec || nap.planned_duration_sec;
             const durationMin = Math.round(durationSec / 60);
+            
+            // Calculate projected start time based on wake windows
+            const wakeWindowMs = (WAKE_WINDOWS_MIN[index] || WAKE_WINDOWS_MIN[WAKE_WINDOWS_MIN.length - 1]) * 60 * 1000;
+            const projectedStartAt = new Date(lastEventEndTime.getTime() + wakeWindowMs);
 
-            // Simple time formatting (a more robust library could be used later)
-            const napTime = `Nap ${nap.nap_index}`; // Placeholder for now
+            // Use actual start time if available, otherwise use projected
+            const displayTime = nap.actual_start_at ? new Date(nap.actual_start_at) : projectedStartAt;
+            
+            if (nap.status === 'upcoming' && !nextUpcomingNapTime) {
+                nextUpcomingNapTime = displayTime;
+            }
 
             li.innerHTML = `
                 <div class="flex items-center space-x-4">
                     <div class="w-2 h-2 rounded-full ${nap.status === 'finished' ? 'bg-gray-400' : nap.status === 'in_progress' ? 'bg-blue-500' : 'bg-green-400'}"></div>
                     <div>
-                        <p class="font-semibold text-gray-800">${napTime} <span class="text-sm font-normal text-gray-500">(${durationMin} min)</span></p>
+                        <p class="font-semibold text-gray-800">${formatTime(displayTime)} <span class="text-sm font-normal text-gray-500">(${durationMin} min)</span></p>
                         <p class="text-xs font-medium ${nap.status === 'finished' ? 'text-gray-600' : 'text-green-600'}">${nap.status.replace('_', ' ')}</p>
                     </div>
                 </div>
                 <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
             `;
             scheduleList.appendChild(li);
+
+            // Update the running time for the next iteration
+            const napEndAt = nap.actual_end_at ? new Date(nap.actual_end_at) : new Date(displayTime.getTime() + durationSec * 1000);
+            lastEventEndTime = napEndAt;
         });
 
         // Update the summary text
         const remainingNaps = appState.naps.filter(n => n.status === 'upcoming').length;
-        scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: Nap ${appState.nextNap?.nap_index || 'N/A'}`;
+        scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: ${formatTime(nextUpcomingNapTime)}`;
 
         // --- Timer and Status Card Logic ---
         // Always clear any existing timer first
@@ -116,10 +147,10 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (appState.currentNap) {
             // --- A nap is IN PROGRESS ---
-            setBabyStatus(true); // Asleep UI
-            
             // Update button to "Stop Nap"
             napControlBtn.textContent = 'Stop Nap';
+            napControlBtn.disabled = false;
+            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             napControlBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
             napControlBtn.classList.add('bg-red-500', 'hover:bg-red-600');
             
@@ -128,6 +159,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const startTime = new Date(appState.currentNap.actual_start_at).getTime();
             napEndTime = startTime + (napDurationSec * 1000);
 
+            setBabyStatus(true, new Date(napEndTime)); // Asleep UI, pass wake-up time
+
             updateTimerDisplay(); // Initial display
             napTimerInterval = setInterval(updateTimerDisplay, 1000);
             
@@ -135,14 +168,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
         } else {
             // --- Baby is AWAKE ---
-            setBabyStatus(false); // Awake UI
-
+            setBabyStatus(false, nextUpcomingNapTime); // Awake UI, pass next nap time
             // Update button to "Start Nap"
-            napControlBtn.textContent = 'Start Nap';
+            napControlBtn.textContent = appState.nextNap ? 'Start Nap' : 'All Naps Finished';
             napControlBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
             napControlBtn.classList.add('bg-green-500', 'hover:bg-green-600');
 
             napTimerContainer.style.display = 'none'; // Hide timer
+
+            // Disable the button if there are no more upcoming naps
+            if (!appState.nextNap) {
+                napControlBtn.disabled = true;
+                napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                napControlBtn.disabled = false;
+                napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
         }
     }
 
@@ -151,7 +192,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const napTimerContainer = document.getElementById('nap-timer-container');
     const napTimerDisplay = document.getElementById('nap-timer-display');
 
-    // let isNapActive = false; // This is now derived from appState.currentNap
+    
     let napTimerInterval = null;
     let napEndTime = 0;
     const NAP_DURATION_MS = 45 * 60 * 1000; // 45 minutes for now
@@ -162,8 +203,9 @@ document.addEventListener('DOMContentLoaded', function() {
     /**
      * Updates the baby status card UI.
      * @param {boolean} isAsleep - True if the baby is asleep, false otherwise.
+     * @param {Date|null} eventTime - The time of the next event (wake-up or next nap).
      */
-    function setBabyStatus(isAsleep) {
+    function setBabyStatus(isAsleep, eventTime) {
         if (isAsleep) {
             // --- Set to ASLEEP state ---
             statusMessage.textContent = 'Baby is asleep!';
@@ -173,7 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Update next event text and colors
             nextEventLabel.textContent = 'Next wake time is';
-            nextEventTime.textContent = '10:15 AM'; // Placeholder for wake-up time
+            nextEventTime.textContent = formatTime(eventTime); // Use calculated wake-up time
             nextEventLabel.classList.replace('text-yellow-700', 'text-indigo-700');
             nextEventTime.classList.replace('text-yellow-800', 'text-indigo-800');
 
@@ -190,7 +232,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Update next event text and colors
             nextEventLabel.textContent = 'Next nap at';
-            nextEventTime.textContent = '9:30 AM'; // Placeholder for nap time
+            nextEventTime.textContent = formatTime(eventTime); // Use calculated next nap time
             nextEventLabel.classList.replace('text-indigo-700', 'text-yellow-700');
             nextEventTime.classList.replace('text-indigo-800', 'text-yellow-800');
 
