@@ -125,7 +125,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <p class="text-xs font-medium ${nap.status === 'finished' ? 'text-gray-600' : 'text-green-600'}">${nap.status.replace('_', ' ')}</p>
                     </div>
                 </div>
-                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
+                <button data-nap-index="${nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
             `;
             scheduleList.appendChild(li);
 
@@ -385,9 +385,64 @@ document.addEventListener('DOMContentLoaded', function() {
         // Handle editing within the list using event delegation
         scheduleList.addEventListener('click', (event) => {
             if (event.target.classList.contains('edit-nap-btn')) {
-                alert('Edit button clicked! (Functionality to be implemented)');
-                // Next step: Open a modal or inline form to edit the nap.
+                const napIndex = parseInt(event.target.dataset.napIndex, 10);
+                const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
+                if (napToEdit) {
+                    openEditModal(napToEdit);
+                }
             }
+        });
+    }
+
+    let currentlyEditingNapIndex = null;
+
+    function openEditModal(nap) {
+        const editModal = document.getElementById('edit-nap-modal');
+        const editModalTitle = document.getElementById('edit-modal-title');
+        const durationInput = document.getElementById('edit-nap-duration-input');
+        if (!editModal || !editModalTitle || !durationInput) return;
+
+        currentlyEditingNapIndex = nap.nap_index;
+        editModalTitle.textContent = `Edit Nap ${nap.nap_index} Duration`;
+        const currentDuration = nap.adjusted_duration_sec || nap.planned_duration_sec;
+        durationInput.value = Math.round(currentDuration / 60);
+        editModal.classList.remove('hidden');
+    }
+
+    function closeEditModal() {
+        const editModal = document.getElementById('edit-nap-modal');
+        if (!editModal) return;
+        currentlyEditingNapIndex = null;
+        editModal.classList.add('hidden');
+    }
+
+    // --- Edit Modal Logic ---
+    const editModal = document.getElementById('edit-nap-modal');
+    if (editModal) {
+        const saveBtn = document.getElementById('save-edit-btn');
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+
+        if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
+
+        if (saveBtn) saveBtn.addEventListener('click', () => {
+            const durationInput = document.getElementById('edit-nap-duration-input');
+            const newDurationMin = parseInt(durationInput.value, 10);
+            if (isNaN(newDurationMin) || newDurationMin <= 0) {
+                alert("Please enter a valid duration in minutes.");
+                return;
+            }
+
+            fetch('/api/naps/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: currentlyEditingNapIndex, duration_min: newDurationMin }) })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeEditModal();
+                        fetchTodaySchedule(); // Refresh the entire schedule
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(console.error);
         });
     }
 

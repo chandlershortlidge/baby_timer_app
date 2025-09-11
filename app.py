@@ -314,6 +314,49 @@ def create_app(test_config=None):
             if conn:
                 conn.close()
 
+    @app.route('/api/naps/update', methods=['POST'])
+    def update_nap():
+        """Updates the duration of a specific upcoming nap."""
+        data = request.json
+        nap_index = data.get('index')
+        new_duration_min = data.get('duration_min')
+
+        if not all([nap_index, new_duration_min is not None]):
+            return {"status": "error", "message": "Missing nap index or duration."}, 400
+
+        try:
+            new_duration_sec = int(new_duration_min) * 60
+        except (ValueError, TypeError):
+            return {"status": "error", "message": "Invalid duration format."}, 400
+
+        # For simplicity, we'll use today's date. A more complex app might need the date from the client.
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        conn = get_db_connection()
+        try:
+            with conn:
+                day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))
+                day_row = day_cursor.fetchone()
+                if not day_row:
+                    return {"status": "error", "message": "Day not started."}, 404
+                day_id = day_row['id']
+
+                # We only allow editing 'upcoming' naps to keep logic simple.
+                # The `planned_duration_sec` is updated, as this is the user's intended plan.
+                # `adjusted_duration_sec` will be recalculated later if a previous nap deviates.
+                cursor = conn.execute('''
+                    UPDATE nap_slots
+                    SET planned_duration_sec = ?, adjusted_duration_sec = NULL
+                    WHERE day_id = ? AND nap_index = ? AND status = 'upcoming'
+                ''', (new_duration_sec, day_id, nap_index))
+
+                if cursor.rowcount == 0:
+                    return {"status": "error", "message": f"Upcoming nap with index {nap_index} not found or cannot be edited."}, 404
+
+            return {"status": "success", "message": f"Nap {nap_index} duration updated."}
+        except sqlite3.Error as e:
+            app.logger.error(f"Database error in update_nap: {e}")
+            return {"status": "error", "message": "Failed to update nap."}, 500
+
     return app
 
 if __name__ == '__main__':
