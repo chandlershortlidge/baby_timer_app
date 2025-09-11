@@ -4,7 +4,7 @@ from datetime import datetime
 from flask import Flask, render_template, request, current_app
 
 # Import the configuration
-from config import Config
+from .config import Config
 
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""

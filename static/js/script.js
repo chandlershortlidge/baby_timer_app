@@ -22,7 +22,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // The backend returns a 200 OK with a "not_found" status if no schedule exists
             if (data.status === 'not_found') {
                 console.log("No schedule found for today. Ready to start a new day.");
-                // TODO: Update UI to show a "Start Day" message
+                // Reset state and render the empty UI
+                appState.day = null;
+                appState.naps = [];
+                renderSchedule(); // <-- This will clear the UI and show the "empty" state
                 return;
             }
 
@@ -58,8 +61,60 @@ document.addEventListener('DOMContentLoaded', function() {
      * Renders the entire schedule UI based on the current appState.
      */
     function renderSchedule() {
-        console.log("Rendering schedule with state:", appState);
-        // This function will be built out later to update the DOM.
+        const scheduleList = document.getElementById('schedule-list');
+        const scheduleSummary = document.getElementById('schedule-summary');
+
+        // Always clear the list first
+        scheduleList.innerHTML = '';
+
+        if (!appState.day) {
+            // This block now runs when the page loads and no schedule exists
+            statusMessage.textContent = "Ready to start the day!";
+            scheduleSummary.textContent = "Wake up time not logged yet.";
+            nextNapContainer.style.display = 'none'; // Hide the time display
+            return; // Stop the function here
+        }
+
+        // This part will run only when there IS a schedule
+        nextNapContainer.style.display = 'block'; // Show the time display again
+
+        // Populate the schedule list
+        appState.naps.forEach(nap => {
+            const li = document.createElement('li');
+            li.className = "flex items-center justify-between p-4 bg-gray-50 rounded-xl";
+
+            // Determine nap duration to display (adjusted or planned)
+            const durationSec = nap.adjusted_duration_sec || nap.planned_duration_sec;
+            const durationMin = Math.round(durationSec / 60);
+
+            // Simple time formatting (a more robust library could be used later)
+            const napTime = `Nap ${nap.nap_index}`; // Placeholder for now
+
+            li.innerHTML = `
+                <div class="flex items-center space-x-4">
+                    <div class="w-2 h-2 rounded-full ${nap.status === 'finished' ? 'bg-gray-400' : nap.status === 'in_progress' ? 'bg-blue-500' : 'bg-green-400'}"></div>
+                    <div>
+                        <p class="font-semibold text-gray-800">${napTime} <span class="text-sm font-normal text-gray-500">(${durationMin} min)</span></p>
+                        <p class="text-xs font-medium ${nap.status === 'finished' ? 'text-gray-600' : 'text-green-600'}">${nap.status.replace('_', ' ')}</p>
+                    </div>
+                </div>
+                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
+            `;
+            scheduleList.appendChild(li);
+        });
+
+        // Update the summary text
+        const remainingNaps = appState.naps.filter(n => n.status === 'upcoming').length;
+        scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: Nap ${appState.nextNap?.nap_index || 'N/A'}`;
+
+        // Update the main status card
+        if (appState.currentNap) {
+            setBabyStatus(true); // Asleep
+            // TODO: Further update nextEventTime with wake-up time
+        } else {
+            setBabyStatus(false); // Awake
+            // TODO: Further update nextEventTime with next nap time
+        }
     }
 
     /**
@@ -135,7 +190,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     body: JSON.stringify({ type: 'wake', timestamp: new Date().toISOString() })
                 })
                 .then(res => res.json())
-                .then(data => console.log('Wake time logged:', data))
+                .then(data => {
+                    console.log('Wake time logged:', data);
+                    // Now that the day is created, fetch the new schedule to update the UI
+                    fetchTodaySchedule();
+                })
                 .catch(console.error);
             }
         });
