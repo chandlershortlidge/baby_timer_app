@@ -107,19 +107,42 @@ document.addEventListener('DOMContentLoaded', function() {
         const remainingNaps = appState.naps.filter(n => n.status === 'upcoming').length;
         scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: Nap ${appState.nextNap?.nap_index || 'N/A'}`;
 
-        // Update the main status card
+        // --- Timer and Status Card Logic ---
+        // Always clear any existing timer first
+        if (napTimerInterval) {
+            clearInterval(napTimerInterval);
+            napTimerInterval = null;
+        }
+        
         if (appState.currentNap) {
-            setBabyStatus(true); // Asleep
+            // --- A nap is IN PROGRESS ---
+            setBabyStatus(true); // Asleep UI
+            
+            // Update button to "Stop Nap"
             napControlBtn.textContent = 'Stop Nap';
             napControlBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
             napControlBtn.classList.add('bg-red-500', 'hover:bg-red-600');
-            // TODO: Further update nextEventTime with wake-up time
+            
+            // Calculate end time and start the visual timer
+            const napDurationSec = appState.currentNap.adjusted_duration_sec || appState.currentNap.planned_duration_sec;
+            const startTime = new Date(appState.currentNap.actual_start_at).getTime();
+            napEndTime = startTime + (napDurationSec * 1000);
+
+            updateTimerDisplay(); // Initial display
+            napTimerInterval = setInterval(updateTimerDisplay, 1000);
+            
+            napTimerContainer.style.display = 'block';
+
         } else {
-            setBabyStatus(false); // Awake
+            // --- Baby is AWAKE ---
+            setBabyStatus(false); // Awake UI
+
+            // Update button to "Start Nap"
             napControlBtn.textContent = 'Start Nap';
             napControlBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
             napControlBtn.classList.add('bg-green-500', 'hover:bg-green-600');
-            // TODO: Further update nextEventTime with next nap time
+
+            napTimerContainer.style.display = 'none'; // Hide timer
         }
     }
 
@@ -230,8 +253,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (timeLeft <= 0) {
             napTimerDisplay.textContent = '00:00';
-            stopNap(false); // Stop without logging a user event
-            alert("Nap time is over!");
+            clearInterval(napTimerInterval);
+            // When the timer finishes, just re-fetch the schedule.
+            // If the user hasn't manually stopped the nap, this will show
+            // that the nap is still "in_progress" until they do.
+            fetchTodaySchedule(); 
+            alert("Nap time is over!"); // Optional: keep the alert
             return;
         }
 
