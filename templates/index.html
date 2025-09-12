@@ -1,110 +1,125 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Nap Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
 
-{% block content %}
-<main>
-    <!-- Main Bedtime Button -->
-    <div class="mb-8">
-        <button id="bedtime-btn" class="w-full bg-indigo-600 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-colors">
-            Start Bedtime
+  <div class="container mx-auto py-10">
+    <h1 class="mb-6 text-2xl font-bold">Today's Schedule</h1>
+
+    <!-- Example schedule items -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
+        <div>
+          <p class="font-semibold">10:51 AM (45 min)</p>
+          <p class="text-sm text-gray-500">upcoming</p>
+        </div>
+        <button onclick="openEditModal(this)" 
+                data-duration="45"
+                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
+          Edit
         </button>
+      </div>
+      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
+        <div>
+          <p class="font-semibold">2:06 PM (60 min)</p>
+          <p class="text-sm text-gray-500">upcoming</p>
+        </div>
+        <button onclick="openEditModal(this)" 
+                data-duration="60"
+                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
+          Edit
+        </button>
+      </div>
+      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
+        <div>
+          <p class="font-semibold">5:36 PM (30 min)</p>
+          <p class="text-sm text-gray-500">upcoming</p>
+        </div>
+        <button onclick="openEditModal(this)" 
+                data-duration="30"
+                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
+          Edit
+        </button>
+      </div>
     </div>
+  </div>
 
-    <!-- Dynamic Status Display -->
-    <div id="status-card" class="bg-yellow-100/50 rounded-3xl p-6 text-center shadow-lg">
-        <div id="status-icon-container" class="w-16 h-16 mx-auto text-yellow-500">
-            <!-- Awake Icon (Sun) -->
-            <svg id="awake-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            <!-- Asleep Icon (Moon) - initially hidden -->
-            <svg id="asleep-icon" xmlns="http://www.w3.org/2000/svg" class="hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-            </svg>
-        </div>
-        <h2 id="status-message" class="text-xl font-bold mt-4 text-yellow-800">Baby is awake!</h2>
-        <div id="next-nap-container">
-            <p id="next-event-label" class="text-lg text-yellow-700 mt-2">Next nap at</p>
-            <p id="next-event-time" class="text-4xl font-extrabold text-yellow-800">9:30 AM</p>
-        </div>
-    </div>
+  <!-- Edit Nap Modal -->
+  <div id="edit-nap-modal"
+       class="fixed inset-0 z-50 hidden"
+       role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+    <!-- overlay -->
+    <div class="absolute inset-0 bg-black/50" onclick="closeEditModal()"></div>
 
-    <!-- Nap Controls -->
-    <div class="mt-8 space-y-4">
-        <div id="nap-action-section" class="text-center">
-            <button id="nap-control-btn" class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
-                Start Nap
-            </button>
-            <!-- Nap Timer (initially hidden) -->
-            <div id="nap-timer-container" class="mt-4">
-                <p id="nap-timer-display" class="text-7xl font-bold text-gray-800 tracking-tighter">45:00</p>
-                <p id="nap-reminder-indicator" class="text-sm text-gray-500 mt-2">
-                    Reminder: Alarm sounds 
-                    <a href="#" class="underline font-semibold text-blue-600">1 minute</a> 
-                    before nap ends.
-                </p>
-            </div>
-        </div>
-    </div>
+    <!-- panel -->
+    <div class="relative mx-auto mt-24 w-11/12 max-w-md rounded-2xl bg-white p-6 shadow-xl">
+      <h3 id="edit-modal-title" class="text-lg font-semibold text-gray-800">
+        Edit Nap Duration
+      </h3>
 
-    <!-- Today's Schedule -->
-    <div class="mt-8 bg-white rounded-3xl p-6 shadow-lg">
-        <div id="schedule-header" class="flex justify-between items-center cursor-pointer">
-            <div class="flex items-center space-x-3">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <div>
-                    <h3 class="text-lg font-bold">Today's Schedule</h3>
-                    <p class="text-sm text-gray-500" id="schedule-summary">4 naps remaining • Next: 9:30 AM</p>
-                </div>
-            </div>
-            <svg id="schedule-toggle-icon" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400 transform rotate-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-        </div>
-        
-        <!-- This is a placeholder for the detailed schedule, which will be populated dynamically -->
-        <ul id="schedule-list" class="mt-6 space-y-3 hidden">
-            <!-- Example Schedule Item 1 -->
-            <li class="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                <div class="flex items-center space-x-4">
-                    <div class="w-2 h-2 rounded-full bg-green-400"></div>
-                    <div>
-                        <p class="font-semibold text-gray-800">9:30 AM <span class="text-sm font-normal text-gray-500">(45 min)</span></p>
-                        <p class="text-xs text-green-600 font-medium">Upcoming</p>
-                    </div>
-                </div>
-                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
-            </li>
-            <!-- Example Schedule Item 2 -->
-            <li class="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                <div class="flex items-center space-x-4">
-                    <div class="w-2 h-2 rounded-full bg-blue-400"></div>
-                    <div>
-                        <p class="font-semibold text-gray-800">1:00 PM <span class="text-sm font-normal text-gray-500">(1 hr 30 min)</span></p>
-                        <p class="text-xs text-blue-600 font-medium">Upcoming</p>
-                    </div>
-                </div>
-                <button class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
-            </li>
-        </ul>
-    </div>
+      <label for="edit-nap-duration-input" class="mt-4 block text-sm text-gray-600">
+        Duration (minutes)
+      </label>
+      <input
+        id="edit-nap-duration-input"
+        type="number" min="1" step="1"
+        class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring"
+        placeholder="e.g. 45"
+      />
 
-    <!-- Edit Nap Modal (initially hidden) -->
-    <div id="edit-nap-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div class="mt-3 text-center">
-                <h3 class="text-lg leading-6 font-medium text-gray-900" id="edit-modal-title">Edit Nap Duration</h3>
-                <div class="mt-2 px-7 py-3">
-                    <p class="text-sm text-gray-500 mb-4">Enter the new duration for the nap in minutes.</p>
-                    <input type="number" id="edit-nap-duration-input" class="w-full px-3 py-2 text-gray-700 border rounded-lg focus:outline-none" />
-                </div>
-                <div class="items-center px-4 py-3 space-x-4">
-                    <button id="cancel-edit-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancel</button>
-                    <button id="save-edit-btn" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">Save Changes</button>
-                </div>
-            </div>
-        </div>
+      <div class="mt-6 flex justify-end gap-3">
+        <button id="cancel-edit-btn"
+                class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200">
+          Cancel
+        </button>
+        <button id="save-edit-btn"
+                class="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
+          Save
+        </button>
+      </div>
     </div>
-</main>
-{% endblock %}
+  </div>
+
+  <!-- Script -->
+  <script>
+    function openEditModal(btn) {
+      const modalEl   = document.getElementById('edit-nap-modal');
+      const inputEl   = document.getElementById('edit-nap-duration-input');
+      const cancelBtn = document.getElementById('cancel-edit-btn');
+      const saveBtn   = document.getElementById('save-edit-btn');
+
+      if (!modalEl || !inputEl) {
+        console.error('Modal elements not found!');
+        return;
+      }
+
+      // Show modal
+      modalEl.classList.remove('hidden');
+
+      // Prefill with existing duration
+      if (btn && btn.dataset.duration) {
+        inputEl.value = btn.dataset.duration;
+      }
+
+      // Cancel closes modal
+      cancelBtn.onclick = () => modalEl.classList.add('hidden');
+
+      // Save (for now just logs and closes)
+      saveBtn.onclick = () => {
+        console.log("New duration:", inputEl.value);
+        modalEl.classList.add('hidden');
+      };
+    }
+
+    function closeEditModal() {
+      const modalEl = document.getElementById('edit-nap-modal');
+      if (modalEl) modalEl.classList.add('hidden');
+    }
+  </script>
+</body>
+</html>

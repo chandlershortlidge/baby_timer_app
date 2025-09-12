@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let napTimerInterval = null;
     let napEndTime = 0;
 
-    // --- Element Getters (Define all element variables here) ---
     const bedtimeBtn = document.getElementById('bedtime-btn');
     const statusCard = document.getElementById('status-card');
     const statusIconContainer = document.getElementById('status-icon-container');
@@ -27,7 +26,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const napTimerDisplay = document.getElementById('nap-timer-display');
     const scheduleHeader = document.getElementById('schedule-header');
     const scheduleList = document.getElementById('schedule-list');
-    const scheduleSummary = document.getElementById('schedule-summary'); // Added for safety
+    const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
     const editModal = document.getElementById('edit-nap-modal');
     const editModalTitle = document.getElementById('edit-modal-title');
@@ -80,9 +79,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (scheduleList) {
         scheduleList.addEventListener('click', (event) => {
-            console.log("Click detected inside the schedule list. Target:", event.target); // <-- ADD THIS LINE
             if (event.target.classList.contains('edit-nap-btn')) {
-                console.log("The EDIT button was clicked."); // <-- ADD THIS LINE
                 const napIndex = parseInt(event.target.dataset.napIndex, 10);
                 const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
                 if (napToEdit) {
@@ -92,42 +89,40 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (saveBtn) {
-        saveBtn.addEventListener('click', () => {
-            const newDurationMin = parseInt(durationInput.value, 10);
-            if (isNaN(newDurationMin) || newDurationMin <= 0) {
-                alert("Please enter a valid duration in minutes.");
-                return;
-            }
-            fetch('/api/naps/update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ index: currentlyEditingNapIndex, duration_min: newDurationMin })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    closeEditModal();
-                    fetchTodaySchedule();
-                } else {
-                    alert(`Error: ${data.message}`);
-                }
-            })
-            .catch(console.error);
-        });
-    }
-
-    if (cancelBtn) {
-        cancelBtn.addEventListener('click', closeEditModal);
-    }
+    // Attach listeners for modal buttons
+    if (saveBtn) saveBtn.addEventListener('click', handleSaveEdit);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
 
     // --- Core Functions ---
+
+    function handleSaveEdit() {
+        if (!durationInput) return; // Safety check
+        const newDurationMin = parseInt(durationInput.value, 10);
+        if (isNaN(newDurationMin) || newDurationMin <= 0) {
+            alert("Please enter a valid duration in minutes.");
+            return;
+        }
+        fetch('/api/naps/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index: currentlyEditingNapIndex, duration_min: newDurationMin })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                closeEditModal();
+                fetchTodaySchedule();
+            } else {
+                alert(`Error: ${data.message}`);
+            }
+        })
+        .catch(console.error);
+    }
 
     async function fetchTodaySchedule() {
         try {
             const response = await fetch('/api/day/today');
             const data = await response.json();
-
             if (data.status === 'not_found') {
                 console.log("No schedule found for today. Ready to start a new day.");
                 appState.day = null;
@@ -135,7 +130,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderSchedule();
                 return;
             }
-
             console.log("Received schedule data:", data);
             appState.day = data.day;
             appState.naps = data.naps;
@@ -149,7 +143,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderSchedule() {
         if (!scheduleList || !scheduleSummary || !statusMessage || !nextNapContainer) return;
-
         scheduleList.innerHTML = '';
         if (!appState.day) {
             statusMessage.textContent = "Ready to start the day!";
@@ -157,12 +150,10 @@ document.addEventListener('DOMContentLoaded', function() {
             nextNapContainer.style.display = 'none';
             return;
         }
-
         nextNapContainer.style.display = 'block';
         let lastEventEndTime = new Date(appState.day.first_wake_at);
         let nextUpcomingNapTime = null;
         const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
-
         appState.naps.forEach((nap, index) => {
             const li = document.createElement('li');
             li.className = "flex items-center justify-between p-4 bg-gray-50 rounded-xl";
@@ -188,15 +179,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const napEndAt = nap.actual_end_at ? new Date(nap.actual_end_at) : new Date(displayTime.getTime() + durationSec * 1000);
             lastEventEndTime = napEndAt;
         });
-
         const remainingNaps = appState.naps.filter(n => n.status === 'upcoming').length;
         scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: ${formatTime(nextUpcomingNapTime)}`;
-
         if (napTimerInterval) {
             clearInterval(napTimerInterval);
             napTimerInterval = null;
         }
-        
         if (appState.currentNap) {
             setBabyStatus(true, new Date(new Date(appState.currentNap.actual_start_at).getTime() + (appState.currentNap.adjusted_duration_sec || appState.currentNap.planned_duration_sec) * 1000));
             napControlBtn.textContent = 'Stop Nap';
@@ -297,30 +285,40 @@ document.addEventListener('DOMContentLoaded', function() {
         napTimerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     }
     
+    /**
+     * Opens the edit modal and populates it with data from the selected nap.
+     * @param {object} nap - The nap object from appState to be edited.
+     */
     function openEditModal(nap) {
-        console.log("openEditModal function was called for nap:", nap); // <-- ADD THIS LINE
-
-        // Let's inspect the elements right before we use them
-        console.log("editModal:", editModal); // <-- ADD THIS LINE
-        console.log("editModalTitle:", editModalTitle); // <-- ADD THIS LINE
-        console.log("durationInput:", durationInput); // <-- ADD THIS LINE
         if (!editModal || !editModalTitle || !durationInput) {
-            console.error("One or more modal elements were not found! Check your HTML IDs."); // <-- ADD THIS LINE
+            console.error("One or more modal elements were not found! Check your HTML IDs.");
             return;
         }
+
+        // Store the index of the nap being edited
         currentlyEditingNapIndex = nap.nap_index;
+
+        // Populate the modal with the nap's data
         editModalTitle.textContent = `Edit Nap ${nap.nap_index} Duration`;
         const currentDuration = nap.adjusted_duration_sec || nap.planned_duration_sec;
         durationInput.value = Math.round(currentDuration / 60);
+
+        // Show the modal
         editModal.classList.remove('hidden');
     }
 
+    /**
+     * Closes the edit modal and resets the editing state.
+     */
     function closeEditModal() {
         if (!editModal) return;
         currentlyEditingNapIndex = null;
         editModal.classList.add('hidden');
     }
 
+    /**
+     * Validates the input from the edit modal and sends the update to the backend.
+     */
     function formatTime(date) {
         if (!date || isNaN(new Date(date))) return 'N/A';
         return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -328,4 +326,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Initial Load ---
     fetchTodaySchedule();
+
+    // --- Optional modal quality-of-life ---
+    if (editModal) {
+        // Close modal when clicking the dark overlay
+        editModal.addEventListener('click', (e) => {
+            if (e.target.id === 'edit-nap-modal') {
+                closeEditModal();
+            }
+        });
+    }
+
+    // Close modal when pressing the Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !editModal.classList.contains('hidden')) {
+            closeEditModal();
+        }
+    });
 });
