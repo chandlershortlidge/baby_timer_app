@@ -28,17 +28,69 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
-    const editModal = document.getElementById('edit-nap-modal');
-    const editModalTitle = document.getElementById('edit-modal-title');
-    const durationInput = document.getElementById('edit-nap-duration-input');
-    const saveBtn = document.getElementById('save-edit-btn');
-    const cancelBtn = document.getElementById('cancel-edit-btn');
+
+    // ---------- Modal helpers (lazy injection + safe lookups) ----------
+    function ensureEditModal() {
+        if (document.getElementById('edit-nap-modal')) return;
+
+        const html = `
+        <div id="edit-nap-modal"
+             class="fixed inset-0 z-50 hidden"
+             role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+          <div class="absolute inset-0 bg-black/50" data-edit-overlay></div>
+          <div class="relative mx-auto mt-24 w-11/12 max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 id="edit-modal-title" class="text-lg font-semibold text-gray-800">
+              Edit Nap Duration
+            </h3>
+
+            <label for="edit-nap-duration-input" class="mt-4 block text-sm text-gray-600">
+              Duration (minutes)
+            </label>
+            <input
+              id="edit-nap-duration-input"
+              type="number" min="1" step="1"
+              class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring"
+              placeholder="e.g. 45"
+            />
+
+            <div class="mt-6 flex justify-end gap-3">
+              <button id="cancel-edit-btn"
+                      class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200">
+                Cancel
+              </button>
+              <button id="save-edit-btn"
+                      class="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+
+        // Wire basic close actions now that it exists
+        const modal = document.getElementById('edit-nap-modal');
+        modal.querySelector('[data-edit-overlay]').onclick = closeEditModal;
+        document.getElementById('cancel-edit-btn').onclick = closeEditModal;
+        document.getElementById('save-edit-btn').onclick = handleSaveEdit;
+    }
+
+    function getModalEls() {
+        // Ensure present before grabbing refs
+        ensureEditModal();
+        return {
+            modal: document.getElementById('edit-nap-modal'),
+            title: document.getElementById('edit-modal-title'),
+            input: document.getElementById('edit-nap-duration-input'),
+            save: document.getElementById('save-edit-btn'),
+            cancel: document.getElementById('cancel-edit-btn'),
+        };
+    }
 
     // --- Centralized Event Listeners ---
     if (bedtimeBtn) {
         let isBedtimeActive = false;
         bedtimeBtn.addEventListener('click', () => {
-             isBedtimeActive = !isBedtimeActive;
+            isBedtimeActive = !isBedtimeActive;
             if (isBedtimeActive) {
                 bedtimeBtn.textContent = 'End Bedtime';
                 bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
@@ -78,26 +130,22 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     if (scheduleList) {
+        // Delegated listener for dynamically rendered Edit buttons
         scheduleList.addEventListener('click', (event) => {
             if (event.target.classList.contains('edit-nap-btn')) {
                 const napIndex = parseInt(event.target.dataset.napIndex, 10);
                 const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
-                if (napToEdit) {
-                    openEditModal(napToEdit);
-                }
+                if (napToEdit) openEditModal(napToEdit);
             }
         });
     }
 
-    // Attach listeners for modal buttons
-    if (saveBtn) saveBtn.addEventListener('click', handleSaveEdit);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
-
     // --- Core Functions ---
 
     function handleSaveEdit() {
-        if (!durationInput) return; // Safety check
-        const newDurationMin = parseInt(durationInput.value, 10);
+        const { input } = getModalEls();
+        if (!input) return;
+        const newDurationMin = parseInt(input.value, 10);
         if (isNaN(newDurationMin) || newDurationMin <= 0) {
             alert("Please enter a valid duration in minutes.");
             return;
@@ -290,8 +338,9 @@ document.addEventListener('DOMContentLoaded', function() {
      * @param {object} nap - The nap object from appState to be edited.
      */
     function openEditModal(nap) {
-        if (!editModal || !editModalTitle || !durationInput) {
-            console.error("One or more modal elements were not found! Check your HTML IDs.");
+        const { modal, title, input, save, cancel } = getModalEls();
+        if (!modal || !title || !input) {
+            console.error("Modal elements missing.");
             return;
         }
 
@@ -299,26 +348,28 @@ document.addEventListener('DOMContentLoaded', function() {
         currentlyEditingNapIndex = nap.nap_index;
 
         // Populate the modal with the nap's data
-        editModalTitle.textContent = `Edit Nap ${nap.nap_index} Duration`;
+        title.textContent = `Edit Nap ${nap.nap_index} Duration`;
         const currentDuration = nap.adjusted_duration_sec || nap.planned_duration_sec;
-        durationInput.value = Math.round(currentDuration / 60);
+        input.value = Math.round(currentDuration / 60);
+
+        // (Re)bind save/cancel safely
+        if (save) save.onclick = handleSaveEdit;
+        if (cancel) cancel.onclick = closeEditModal;
 
         // Show the modal
-        editModal.classList.remove('hidden');
+        modal.classList.remove('hidden');
     }
 
     /**
      * Closes the edit modal and resets the editing state.
      */
     function closeEditModal() {
-        if (!editModal) return;
+        const modal = document.getElementById('edit-nap-modal');
+        if (!modal) return;
         currentlyEditingNapIndex = null;
-        editModal.classList.add('hidden');
+        modal.classList.add('hidden');
     }
 
-    /**
-     * Validates the input from the edit modal and sends the update to the backend.
-     */
     function formatTime(date) {
         if (!date || isNaN(new Date(date))) return 'N/A';
         return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -327,19 +378,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Initial Load ---
     fetchTodaySchedule();
 
-    // --- Optional modal quality-of-life ---
-    if (editModal) {
-        // Close modal when clicking the dark overlay
-        editModal.addEventListener('click', (e) => {
-            if (e.target.id === 'edit-nap-modal') {
-                closeEditModal();
-            }
-        });
-    }
-
-    // Close modal when pressing the Escape key
+    // --- Escape-to-close, guarded if modal exists ---
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !editModal.classList.contains('hidden')) {
+        const modal = document.getElementById('edit-nap-modal');
+        if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
             closeEditModal();
         }
     });
