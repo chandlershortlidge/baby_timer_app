@@ -4,122 +4,89 @@
   <meta charset="UTF-8" />
   <title>Nap Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Dev: CDN is fine. (For prod, build Tailwind) -->
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-50 text-gray-800">
+<body class="bg-gradient-to-br from-gray-50 to-blue-50/30 text-gray-800">
+  <div class="max-w-md mx-auto min-h-screen p-4 space-y-6">
 
-  <div class="container mx-auto py-10">
-    <h1 class="mb-6 text-2xl font-bold">Today's Schedule</h1>
+    <!-- Bedtime toggle -->
+    <button id="bedtime-btn"
+      class="w-full bg-indigo-600 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-colors">
+      Start Bedtime
+    </button>
 
-    <!-- Example schedule items -->
-    <div class="space-y-3">
-      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
-        <div>
-          <p class="font-semibold">10:51 AM (45 min)</p>
-          <p class="text-sm text-gray-500">upcoming</p>
-        </div>
-        <button onclick="openEditModal(this)" 
-                data-duration="45"
-                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
-          Edit
-        </button>
+    <!-- Status card -->
+    <div id="status-card" class="bg-amber-50 rounded-3xl p-8 text-center shadow-lg flex flex-col items-center justify-center">
+      <div id="status-icon-container" class="w-12 h-12 text-amber-500 mb-4">
+        <!-- Icons toggled by JS -->
+        <svg id="awake-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m8.66-10.66h-1M4.34 12.34h-1M16.95 7.05l-.7.7M7.75 16.25l-.7.7M16.95 16.95l-.7-.7M7.75 7.75l-.7-.7M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+        </svg>
+        <svg id="asleep-icon" class="hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+        </svg>
       </div>
-      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
-        <div>
-          <p class="font-semibold">2:06 PM (60 min)</p>
-          <p class="text-sm text-gray-500">upcoming</p>
+      <p id="status-message" class="text-xl font-bold text-amber-800">Baby is awake!</p>
+      <p id="next-nap-container" class="mt-2">
+        <span id="next-event-label" class="block text-sm text-amber-700">Next nap at</span>
+        <span id="next-event-time" class="block text-5xl font-extrabold text-amber-800">—</span>
+      </p>
+    </div>
+
+    <!-- Start/Stop Nap -->
+    <button id="nap-control-btn"
+      class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
+      Start Nap
+    </button>
+
+    <!-- Big timer -->
+    <div class="text-center">
+      <div id="nap-timer-display" class="text-7xl font-extrabold tracking-tight">45:00</div>
+      <p class="mt-2 text-sm text-gray-500">
+        Reminder: Alarm sounds <span class="underline">1 minute</span> before nap ends.
+      </p>
+    </div>
+
+    <!-- Schedule card -->
+    <div class="rounded-3xl bg-white shadow-lg p-4">
+      <div id="schedule-header" class="flex items-center justify-between cursor-pointer">
+        <div class="flex items-center gap-2">
+          <div class="w-5 h-5 rounded-md bg-blue-100 flex items-center justify-center">
+            <span class="text-blue-600 text-sm">🗓️</span>
+          </div>
+          <h2 class="text-lg font-semibold">Today's Schedule</h2>
         </div>
-        <button onclick="openEditModal(this)" 
-                data-duration="60"
-                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
-          Edit
-        </button>
+        <span id="schedule-toggle-icon" class="transition-transform">⌄</span>
       </div>
-      <div class="flex items-center justify-between rounded-xl bg-white p-4 shadow">
-        <div>
-          <p class="font-semibold">5:36 PM (30 min)</p>
-          <p class="text-sm text-gray-500">upcoming</p>
-        </div>
-        <button onclick="openEditModal(this)" 
-                data-duration="30"
-                class="rounded-xl bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
-          Edit
-        </button>
+
+      <div id="schedule-summary" class="mt-1 text-sm text-gray-600">
+        <!-- filled by JS: “4 naps remaining • Next: 9:30 AM” -->
       </div>
+
+      <ul id="schedule-list" class="mt-4 space-y-3">
+        <!-- JS renders items here; each li gets an Edit button with class 'edit-nap-btn' -->
+      </ul>
     </div>
   </div>
 
   <!-- Edit Nap Modal -->
-  <div id="edit-nap-modal"
-       class="fixed inset-0 z-50 hidden"
-       role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
-    <!-- overlay -->
-    <div class="absolute inset-0 bg-black/50" onclick="closeEditModal()"></div>
-
-    <!-- panel -->
+  <div id="edit-nap-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+    <div class="absolute inset-0 bg-black/50" data-edit-overlay></div>
     <div class="relative mx-auto mt-24 w-11/12 max-w-md rounded-2xl bg-white p-6 shadow-xl">
-      <h3 id="edit-modal-title" class="text-lg font-semibold text-gray-800">
-        Edit Nap Duration
-      </h3>
-
-      <label for="edit-nap-duration-input" class="mt-4 block text-sm text-gray-600">
-        Duration (minutes)
-      </label>
-      <input
-        id="edit-nap-duration-input"
-        type="number" min="1" step="1"
-        class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring"
-        placeholder="e.g. 45"
-      />
-
+      <h3 id="edit-modal-title" class="text-lg font-semibold text-gray-800">Edit Nap Duration</h3>
+      <label for="edit-nap-duration-input" class="mt-4 block text-sm text-gray-600">Duration (minutes)</label>
+      <input id="edit-nap-duration-input" type="number" min="1" step="1"
+             class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring"
+             placeholder="e.g. 45" />
       <div class="mt-6 flex justify-end gap-3">
-        <button id="cancel-edit-btn"
-                class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200">
-          Cancel
-        </button>
-        <button id="save-edit-btn"
-                class="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
-          Save
-        </button>
+        <button id="cancel-edit-btn" class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200">Cancel</button>
+        <button id="save-edit-btn" class="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">Save</button>
       </div>
     </div>
   </div>
 
-  <!-- Script -->
-  <script>
-    function openEditModal(btn) {
-      const modalEl   = document.getElementById('edit-nap-modal');
-      const inputEl   = document.getElementById('edit-nap-duration-input');
-      const cancelBtn = document.getElementById('cancel-edit-btn');
-      const saveBtn   = document.getElementById('save-edit-btn');
-
-      if (!modalEl || !inputEl) {
-        console.error('Modal elements not found!');
-        return;
-      }
-
-      // Show modal
-      modalEl.classList.remove('hidden');
-
-      // Prefill with existing duration
-      if (btn && btn.dataset.duration) {
-        inputEl.value = btn.dataset.duration;
-      }
-
-      // Cancel closes modal
-      cancelBtn.onclick = () => modalEl.classList.add('hidden');
-
-      // Save (for now just logs and closes)
-      saveBtn.onclick = () => {
-        console.log("New duration:", inputEl.value);
-        modalEl.classList.add('hidden');
-      };
-    }
-
-    function closeEditModal() {
-      const modalEl = document.getElementById('edit-nap-modal');
-      if (modalEl) modalEl.classList.add('hidden');
-    }
-  </script>
+  <!-- External JS (the single source of truth) -->
+  <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

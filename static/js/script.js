@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let napTimerInterval = null;
     let napEndTime = 0;
 
+    // Prevents repeated "Nap time is over!" alerts
+    let napOverNotified = false;
+
     const bedtimeBtn = document.getElementById('bedtime-btn');
     const statusCard = document.getElementById('status-card');
     const statusIconContainer = document.getElementById('status-icon-container');
@@ -129,16 +132,38 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (scheduleList) {
-        // Delegated listener for dynamically rendered Edit buttons
-        scheduleList.addEventListener('click', (event) => {
-            if (event.target.classList.contains('edit-nap-btn')) {
-                const napIndex = parseInt(event.target.dataset.napIndex, 10);
-                const napToEdit = appState.naps.find(n => n.nap_index === napIndex);
-                if (napToEdit) openEditModal(napToEdit);
-            }
-        });
-    }
+    // Works even if buttons aren't inside #schedule-list
+    document.addEventListener('click', (event) => {
+      const editBtn = event.target.closest('.edit-nap-btn');
+      if (!editBtn) return;
+
+      // accept nap index from the button or a parent
+      const napIndex = parseInt(
+        editBtn.dataset.napIndex ||
+        editBtn.closest('[data-nap-index]')?.dataset.napIndex,
+        10
+      );
+
+      // find the nap from appState (preferred)
+      let napToEdit = appState.naps.find(n => n.nap_index === napIndex);
+
+      // fallback: if we only have duration on the button, build a stub
+      if (!napToEdit) {
+        const durMin = parseInt(
+          editBtn.dataset.duration ||
+          editBtn.closest('[data-duration]')?.dataset.duration,
+          10
+        );
+        napToEdit = {
+          nap_index: napIndex ?? 0,
+          planned_duration_sec: isNaN(durMin) ? 0 : durMin * 60,
+          adjusted_duration_sec: null,
+          status: 'upcoming'
+        };
+      }
+
+      if (napToEdit) openEditModal(napToEdit);
+    });
 
     // --- Core Functions ---
 
@@ -241,6 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const napDurationSec = appState.currentNap.adjusted_duration_sec || appState.currentNap.planned_duration_sec;
             const startTime = new Date(appState.currentNap.actual_start_at).getTime();
             napEndTime = startTime + (napDurationSec * 1000);
+            napOverNotified = false; // Reset notification flag for new nap
             updateTimerDisplay();
             napTimerInterval = setInterval(updateTimerDisplay, 1000);
             napTimerContainer.style.display = 'block';
@@ -261,26 +287,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function setBabyStatus(isAsleep, eventTime) {
         if (!statusMessage || !statusCard || !statusIconContainer || !nextEventLabel || !nextEventTime || !awakeIcon || !asleepIcon) return;
+
         if (isAsleep) {
+            // Asleep — indigo theme
             statusMessage.textContent = 'Baby is asleep!';
-            statusCard.className = 'bg-indigo-100/50 rounded-3xl p-6 text-center shadow-lg';
-            statusIconContainer.className = 'w-16 h-16 mx-auto text-indigo-500';
+            statusCard.className = 'bg-indigo-50 rounded-3xl p-8 text-center shadow-lg';
+            statusIconContainer.className = 'w-12 h-12 mx-auto text-indigo-500';
             statusMessage.className = 'text-xl font-bold mt-4 text-indigo-800';
             nextEventLabel.textContent = 'Next wake time is';
             nextEventTime.textContent = formatTime(eventTime);
-            nextEventLabel.className = 'text-lg text-indigo-700 mt-2';
-            nextEventTime.className = 'text-4xl font-extrabold text-indigo-800';
+            nextEventLabel.className = 'text-sm text-indigo-700 mt-1';
+            nextEventTime.className = 'text-5xl font-extrabold text-indigo-800';
             awakeIcon.classList.add('hidden');
             asleepIcon.classList.remove('hidden');
         } else {
+            // Awake — amber theme (matches the “nice” screenshot)
             statusMessage.textContent = 'Baby is awake!';
-            statusCard.className = 'bg-yellow-100/50 rounded-3xl p-6 text-center shadow-lg';
-            statusIconContainer.className = 'w-16 h-16 mx-auto text-yellow-500';
-            statusMessage.className = 'text-xl font-bold mt-4 text-yellow-800';
+            statusCard.className = 'bg-amber-50 rounded-3xl p-8 text-center shadow-lg';
+            statusIconContainer.className = 'w-12 h-12 mx-auto text-amber-500';
+            statusMessage.className = 'text-xl font-bold mt-4 text-amber-800';
             nextEventLabel.textContent = 'Next nap at';
             nextEventTime.textContent = formatTime(eventTime);
-            nextEventLabel.className = 'text-lg text-yellow-700 mt-2';
-            nextEventTime.className = 'text-4xl font-extrabold text-yellow-800';
+            nextEventLabel.className = 'text-sm text-amber-700 mt-1';
+            nextEventTime.className = 'text-5xl font-extrabold text-amber-800';
             awakeIcon.classList.remove('hidden');
             asleepIcon.classList.add('hidden');
         }
@@ -297,7 +326,10 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(res => res.json())
         .then(data => {
             console.log('API /api/naps/start response:', data);
-            if (data.status === 'success') fetchTodaySchedule();
+            if (data.status === 'success') {
+                napOverNotified = false;
+                fetchTodaySchedule();
+            }
         })
         .catch(console.error);
     }
@@ -321,16 +353,36 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateTimerDisplay() {
         if (!napTimerDisplay) return;
         const timeLeft = napEndTime - Date.now();
+
         if (timeLeft <= 0) {
             napTimerDisplay.textContent = '00:00';
-            clearInterval(napTimerInterval);
-            alert("Nap time is over!");
-            fetchTodaySchedule();
+
+            // stop the ticking
+            if (napTimerInterval) {
+              clearInterval(napTimerInterval);
+              napTimerInterval = null;
+            }
+
+            // only notify/act once
+            if (!napOverNotified) {
+              napOverNotified = true;
+
+              // Option A: auto-stop the nap on backend (recommended)
+              if (appState.currentNap) {
+                stopNap();            // this will fetchTodaySchedule() on success
+              } else {
+                fetchTodaySchedule(); // fallback
+              }
+
+              alert("Nap time is over!");
+            }
             return;
         }
+
         const minutes = Math.floor((timeLeft / 1000 / 60) % 60);
         const seconds = Math.floor((timeLeft / 1000) % 60);
-        napTimerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        napTimerDisplay.textContent =
+            `${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
     }
     
     /**
