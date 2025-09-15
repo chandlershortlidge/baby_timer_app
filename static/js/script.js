@@ -91,43 +91,56 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Centralized Event Listeners ---
     if (bedtimeBtn) {
-        let isBedtimeActive = false;
-        bedtimeBtn.addEventListener('click', () => {
-            isBedtimeActive = !isBedtimeActive;
-            if (isBedtimeActive) {
-                bedtimeBtn.textContent = 'End Bedtime';
-                bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-                bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
-                console.log('Bedtime started (night sleep)');
-                fetch('/api/day/bedtime', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'sleep', timestamp: new Date().toISOString() })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    console.log('Bedtime sleep event logged:', data);
-                    fetchTodaySchedule(); // Refresh state
-                })
-                .catch(console.error);
-            } else {
-                bedtimeBtn.textContent = 'Start Bedtime';
-                bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
-                bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-                console.log('Bedtime ended (morning wake up)');
-                fetch('/api/day/bedtime', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'wake', timestamp: new Date().toISOString() })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    console.log('Wake time logged:', data);
-                    fetchTodaySchedule();
-                })
-                .catch(console.error);
-            }
-        });
+      let isBedtimeActive = false;
+    
+      bedtimeBtn.addEventListener('click', () => {
+        isBedtimeActive = !isBedtimeActive;
+    
+        if (isBedtimeActive) {
+          // Button look
+          bedtimeBtn.textContent = 'End Bedtime';
+          bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+          bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+    
+          // --- NEW: reflect night sleep in the UI ---
+          // Treat this like "asleep" with no known wake time yet
+          setBabyStatus(true, null);
+          if (nextEventLabel) nextEventLabel.textContent = 'Next wake time is';
+          if (nextEventTime)  nextEventTime.textContent  = 'N/A';
+    
+          // Nap controls off during bedtime
+          if (napControlBtn) {
+            napControlBtn.disabled = true;
+            napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
+          }
+          if (napTimerContainer) napTimerContainer.style.display = 'none';
+    
+          // No API call here; bedtime "start" is just UI
+        } else {
+          // Turning bedtime OFF = morning wake → log it and rebuild schedule
+          bedtimeBtn.textContent = 'Start Bedtime';
+          bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+          bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+    
+          // Re-enable nap control (actual enable/disable will be decided by renderSchedule)
+          if (napControlBtn) {
+            napControlBtn.disabled = false;
+            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          }
+    
+          fetch('/api/day/bedtime', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'wake', timestamp: new Date().toISOString() })
+          })
+          .then(res => res.json())
+          .then(data => {
+            console.log('Wake time logged:', data);
+            fetchTodaySchedule();
+          })
+          .catch(console.error);
+        }
+      });
     }
 
     if (napControlBtn) {
