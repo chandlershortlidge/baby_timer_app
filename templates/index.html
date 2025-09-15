@@ -17,17 +17,33 @@
     </button>
 
     <!-- Status card -->
-    <div id="status-card" class="bg-yellow-100/50 rounded-3xl p-6 text-center shadow-lg">
-      <div id="status-icon-container" class="w-16 h-16 mx-auto text-yellow-500">
-        <!-- simple placeholders; JS toggles visibility -->
-        <svg id="awake-icon" viewBox="0 0 24 24"></svg>
-        <svg id="asleep-icon" class="hidden" viewBox="0 0 24 24"></svg>
+    <div id="status-card" class="bg-yellow-50 rounded-3xl p-8 text-center shadow-lg">
+      <!-- Icon -->
+      <div id="status-icon-container" class="w-12 h-12 mx-auto text-yellow-500">
+        <!-- Sun (awake) -->
+        <svg id="awake-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm0-14a1 1 0 0 1 1-1h0a1 1 0 1 1-2 0h0a1 1 0 0 1 1-1ZM12 21a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm9-9a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM3 12a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm14.95-6.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414ZM4.636 18.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414Zm14.142 1.414a1 1 0 1 1-1.414-1.414 1 1 0 0 1 1.414 1.414ZM6.05 5.636A1 1 0 1 1 4.636 4.222 1 1 0 0 1 6.05 5.636Z"/>
+        </svg>
+        <!-- Moon (asleep) -->
+        <svg id="asleep-icon" class="hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3c.2 0 .41.01.61.03a7 7 0 0 0 9.15 9.15c.02.2.03.41.03.61Z"/>
+        </svg>
       </div>
-      <p id="status-message" class="text-xl font-bold mt-4 text-yellow-800">Baby is awake!</p>
+
+      <!-- “Baby is awake!/asleep!” -->
+      <p id="status-message" class="mt-4 text-xl font-bold text-yellow-800">
+        Baby is awake!
+      </p>
+
+      <!-- “Next nap at / Next wake time is” -->
       <p id="next-nap-container" class="mt-2">
         <span id="next-event-label" class="text-lg text-yellow-700">Next nap at</span>
-        <span id="next-event-time" class="text-4xl font-extrabold text-yellow-800">—</span>
       </p>
+
+      <!-- Big time -->
+      <div class="mt-1">
+        <span id="next-event-time" class="text-4xl font-extrabold text-yellow-800">9:30 AM</span>
+      </div>
     </div>
 
     <!-- Start/Stop Nap -->
