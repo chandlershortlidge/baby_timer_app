@@ -99,6 +99,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
                 bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
                 console.log('Bedtime started (night sleep)');
+                fetch('/api/day/bedtime', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'sleep', timestamp: new Date().toISOString() })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    console.log('Bedtime sleep event logged:', data);
+                    fetchTodaySchedule(); // Refresh state
+                })
+                .catch(console.error);
             } else {
                 bedtimeBtn.textContent = 'Start Bedtime';
                 bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
