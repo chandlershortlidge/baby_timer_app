@@ -280,10 +280,13 @@ def create_app(test_config=None):
         """Updates the duration of a specific nap.
         - upcoming  -> planned_duration_sec
         - in_progress -> adjusted_duration_sec (affects the live timer)
+        Accepts an optional "date" field so clients in different timezones can
+        target the intended day explicitly.
         """
         data = request.json
         nap_index = data.get('index')
         new_duration_min = data.get('duration_min')
+        request_date = data.get('date')
 
         if nap_index is None or new_duration_min is None:
             return {"status": "error", "message": "Missing nap index or duration."}, 400
@@ -293,11 +296,21 @@ def create_app(test_config=None):
         except (ValueError, TypeError):
             return {"status": "error", "message": "Invalid duration format."}, 400
 
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        if request_date:
+            try:
+                if 'T' in request_date:
+                    target_date = datetime.fromisoformat(request_date.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                else:
+                    target_date = request_date.strip()
+            except ValueError:
+                return {"status": "error", "message": "Invalid date format."}, 400
+        else:
+            target_date = datetime.now().strftime('%Y-%m-%d')
+
         conn = get_db_connection()
         try:
             with conn:
-                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,)).fetchone()
+                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (target_date,)).fetchone()
                 if not day_row:
                     return {"status": "error", "message": "Day not started."}, 404
                 day_id = day_row['id']
@@ -337,6 +350,7 @@ def create_app(test_config=None):
         finally:
             if conn:
                 conn.close()
+
     @app.route('/api/naps/stop', methods=['POST'])
     def stop_nap():
         """Logs the end of a nap and triggers schedule adjustment logic."""

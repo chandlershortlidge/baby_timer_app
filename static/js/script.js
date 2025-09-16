@@ -221,7 +221,11 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/naps/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: editingIndexNum, duration_min: newDurationMin })
+            body: JSON.stringify({
+                index: editingIndexNum,
+                duration_min: newDurationMin,
+                date: appState.day?.date || undefined,
+            })
         })
         .then(res => res.json())
         .then(data => {
@@ -260,6 +264,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log("No schedule found for today. Ready to start a new day.");
                 appState.day = null;
                 appState.naps = [];
+                appState.currentNap = null;
+                appState.nextNap = null;
                 renderSchedule();
                 return;
             }
@@ -278,9 +284,22 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!scheduleList || !scheduleSummary || !statusMessage || !nextNapContainer) return;
         scheduleList.innerHTML = '';
         if (!appState.day) {
+            setBabyStatus(false, null);
             statusMessage.textContent = "Ready to start the day!";
             scheduleSummary.textContent = "Wake up time not logged yet.";
             if (nextNapContainer) nextNapContainer.style.display = 'none';
+            if (napTimerInterval) {
+                clearInterval(napTimerInterval);
+                napTimerInterval = null;
+            }
+            if (napTimerDisplay) napTimerDisplay.textContent = '00:00';
+            napOverNotified = false;
+            if (napTimerContainer) napTimerContainer.style.display = 'none';
+            if (napControlBtn) {
+                napControlBtn.textContent = 'Start Nap';
+                napControlBtn.disabled = true;
+                napControlBtn.className = 'w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors opacity-50 cursor-not-allowed';
+            }
             return;
         }
         if (nextNapContainer) nextNapContainer.style.display = 'block';
