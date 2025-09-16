@@ -7,10 +7,14 @@ document.addEventListener('DOMContentLoaded', function() {
         naps: [],
         currentNap: null,
         nextNap: null,
+        sleepSession: null,
     };
     let currentlyEditingNapIndex = null;
     let napTimerInterval = null;
     let napEndTime = 0;
+    let sleepInfoInterval = null;
+    let isBedtimeActive = false;
+    let setBedtimeUIState = () => {};
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -44,6 +48,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
+    const sleepInfoContainer = document.getElementById('sleep-summary');
+    const sleepDurationText = document.getElementById('sleep-duration-text');
+    const wakeTimeText = document.getElementById('wake-time-text');
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
     function ensureEditModal() {
@@ -104,56 +111,97 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Centralized Event Listeners ---
     if (bedtimeBtn) {
-      let isBedtimeActive = false;
-    
-      bedtimeBtn.addEventListener('click', () => {
-        isBedtimeActive = !isBedtimeActive;
-    
-        if (isBedtimeActive) {
-          // Button look
-          bedtimeBtn.textContent = 'End Bedtime';
-          bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-          bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
-    
-          // --- NEW: reflect night sleep in the UI ---
-          // Treat this like "asleep" with no known wake time yet
-          setBabyStatus(true, null);
-          if (nextEventLabel) nextEventLabel.textContent = 'Next wake time is';
-          if (nextEventTime)  nextEventTime.textContent  = 'N/A';
-    
-          // Nap controls off during bedtime
-          if (napControlBtn) {
+      const applyBedtimeActiveUI = () => {
+        bedtimeBtn.textContent = 'End Bedtime';
+        bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+        bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+        if (napControlBtn) {
+          napControlBtn.disabled = true;
+          napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+        if (napTimerContainer) napTimerContainer.style.display = 'none';
+      };
+
+      const applyBedtimeInactiveUI = () => {
+        bedtimeBtn.textContent = 'Start Bedtime';
+        bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+        bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+        if (napControlBtn) {
+          if (appState.day && appState.nextNap) {
+            napControlBtn.disabled = false;
+            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          } else {
             napControlBtn.disabled = true;
             napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
           }
-          if (napTimerContainer) napTimerContainer.style.display = 'none';
-    
-          // No API call here; bedtime "start" is just UI
+        }
+      };
+
+      const updateBedtimeUI = (active) => {
+        isBedtimeActive = active;
+        if (active) {
+          applyBedtimeActiveUI();
         } else {
-          // Turning bedtime OFF = morning wake → log it and rebuild schedule
-          bedtimeBtn.textContent = 'Start Bedtime';
-          bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
-          bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-    
-          // Re-enable nap control (actual enable/disable will be decided by renderSchedule)
-          if (napControlBtn) {
-            napControlBtn.disabled = false;
-            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-          }
-    
+          applyBedtimeInactiveUI();
+        }
+      };
+
+      bedtimeBtn.addEventListener('click', () => {
+        const togglingToActive = !isBedtimeActive;
+        const timestamp = nowIso();
+
+        if (togglingToActive) {
+          const previousSession = appState.sleepSession;
+          setBabyStatus(true, null);
+          if (nextEventLabel) nextEventLabel.textContent = 'Next wake time is';
+          if (nextEventTime) nextEventTime.textContent = 'N/A';
+          updateBedtimeUI(true);
+          appState.sleepSession = { start_at: timestamp };
+          updateSleepSummary();
+
           fetch('/api/day/bedtime', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'wake', timestamp: nowIso() })
+            body: JSON.stringify({ type: 'sleep', timestamp })
           })
           .then(res => res.json())
           .then(data => {
-            console.log('Wake time logged:', data);
+            if (data.status !== 'success') throw new Error(data.message || 'Failed to start bedtime');
+            isBedtimeActive = true;
+          })
+          .catch(err => {
+            console.error(err);
+            appState.sleepSession = previousSession;
+            updateSleepSummary();
+            updateBedtimeUI(false);
+            fetchTodaySchedule();
+          });
+        } else {
+          const previousSession = appState.sleepSession;
+          setBabyStatus(false, null);
+          updateBedtimeUI(false);
+
+          fetch('/api/day/bedtime', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'wake', timestamp })
+          })
+          .then(res => res.json())
+          .then(data => {
+            if (data.status !== 'success') throw new Error(data.message || 'Failed to end bedtime');
+            isBedtimeActive = false;
             fetchTodaySchedule();
           })
-          .catch(console.error);
+          .catch(err => {
+            console.error(err);
+            appState.sleepSession = previousSession;
+            updateBedtimeUI(true);
+            updateSleepSummary();
+          });
         }
       });
+
+      setBedtimeUIState = updateBedtimeUI;
     }
 
     if (napControlBtn) {
@@ -260,6 +308,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const response = await fetch('/api/day/today');
             const data = await response.json();
+            appState.sleepSession = data.sleep_session || null;
             if (data.status === 'not_found') {
                 console.log("No schedule found for today. Ready to start a new day.");
                 appState.day = null;
@@ -282,11 +331,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderSchedule() {
         if (!scheduleList || !scheduleSummary || !statusMessage || !nextNapContainer) return;
+        const bedtimeActive = Boolean(appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at);
+        setBedtimeUIState(bedtimeActive);
         scheduleList.innerHTML = '';
         if (!appState.day) {
-            setBabyStatus(false, null);
-            statusMessage.textContent = "Ready to start the day!";
-            scheduleSummary.textContent = "Wake up time not logged yet.";
+            if (bedtimeActive) {
+                setBabyStatus(true, null);
+                statusMessage.textContent = "Baby is asleep!";
+                scheduleSummary.textContent = "Night sleep in progress.";
+            } else {
+                setBabyStatus(false, null);
+                statusMessage.textContent = "Ready to start the day!";
+                scheduleSummary.textContent = "Wake up time not logged yet.";
+            }
             if (nextNapContainer) nextNapContainer.style.display = 'none';
             if (napTimerInterval) {
                 clearInterval(napTimerInterval);
@@ -300,6 +357,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 napControlBtn.disabled = true;
                 napControlBtn.className = 'w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors opacity-50 cursor-not-allowed';
             }
+            updateSleepSummary();
             return;
         }
         if (nextNapContainer) nextNapContainer.style.display = 'block';
@@ -362,6 +420,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             }
         }
+
+        updateSleepSummary();
     }
 
     function setBabyStatus(isAsleep, eventTime) {
@@ -505,6 +565,81 @@ document.addEventListener('DOMContentLoaded', function() {
         return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     }
 
+    function formatDuration(totalSeconds) {
+        if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return 'N/A';
+        const totalMinutes = Math.round(totalSeconds / 60);
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const parts = [];
+        if (hours > 0) parts.push(`${hours} hr${hours !== 1 ? 's' : ''}`);
+        parts.push(`${minutes} min`);
+        return parts.join(' ');
+    }
+
+    function secondsSince(startIso) {
+        const startMs = new Date(startIso).getTime();
+        if (Number.isNaN(startMs)) return null;
+        return Math.max(0, Math.floor((nowMs() - startMs) / 1000));
+    }
+
+    function stopSleepInfoTicker() {
+        if (sleepInfoInterval) {
+            clearInterval(sleepInfoInterval);
+            sleepInfoInterval = null;
+        }
+    }
+
+    function updateActiveSleepDuration(startIso) {
+        if (!wakeTimeText) return;
+        const elapsedSec = secondsSince(startIso);
+        if (elapsedSec === null) return;
+        wakeTimeText.textContent = `Asleep for ${formatDuration(elapsedSec)}`;
+    }
+
+    function updateSleepSummary() {
+        if (!sleepInfoContainer) return;
+
+        const activeSession = appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at;
+        const totalSleepSeconds = Number(appState.day?.total_night_sleep_sec);
+        const dayMetrics = Boolean(
+            appState.day &&
+            appState.day.bedtime_start_at &&
+            appState.day.first_wake_at &&
+            Number.isFinite(totalSleepSeconds)
+        );
+
+        if (activeSession) {
+            sleepInfoContainer.classList.remove('hidden');
+            if (sleepDurationText) sleepDurationText.textContent = `Went to bed at ${formatTime(appState.sleepSession.start_at)}`;
+            updateActiveSleepDuration(appState.sleepSession.start_at);
+
+            if (!sleepInfoInterval) {
+                sleepInfoInterval = setInterval(() => {
+                    if (!(appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at)) {
+                        stopSleepInfoTicker();
+                        return;
+                    }
+                    updateActiveSleepDuration(appState.sleepSession.start_at);
+                }, 60000);
+            }
+            return;
+        }
+
+        stopSleepInfoTicker();
+
+        if (dayMetrics) {
+            sleepInfoContainer.classList.remove('hidden');
+            if (sleepDurationText) {
+                sleepDurationText.textContent = `Night sleep: ${formatDuration(totalSleepSeconds)}`;
+            }
+            if (wakeTimeText) {
+                wakeTimeText.textContent = `Down at ${formatTime(appState.day.bedtime_start_at)} • Woke at ${formatTime(appState.day.first_wake_at)}`;
+            }
+        } else {
+            sleepInfoContainer.classList.add('hidden');
+        }
+    }
+
     // --- Initial Load ---
     fetchTodaySchedule();
 
@@ -525,6 +660,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log(`DEV: Clock offset is now ${clockOffsetMs / 60000} minutes.`);
             // Repaint anything time-based
             if (appState.currentNap) updateTimerDisplay();
+            updateSleepSummary();
         }
     });
 });
