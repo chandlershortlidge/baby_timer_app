@@ -12,6 +12,19 @@ document.addEventListener('DOMContentLoaded', function() {
     let napTimerInterval = null;
     let napEndTime = 0;
 
+
+    // Global dev clock (0 by default). Positive = pretend it's later.
+    let clockOffsetMs = 0;
+
+    function nowMs() {
+    return Date.now() + clockOffsetMs;
+    }
+    function nowIso() {
+    return new Date(nowMs()).toISOString();
+    }
+
+
+
     // Prevents repeated "Nap time is over!" alerts
     let napOverNotified = false;
 
@@ -131,7 +144,7 @@ document.addEventListener('DOMContentLoaded', function() {
           fetch('/api/day/bedtime', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'wake', timestamp: new Date().toISOString() })
+            body: JSON.stringify({ type: 'wake', timestamp: nowIso() })
           })
           .then(res => res.json())
           .then(data => {
@@ -368,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/naps/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: napIndex, timestamp: new Date().toISOString() }),
+            body: JSON.stringify({ index: napIndex, timestamp: nowIso() }),
         })
         .then(res => res.json())
         .then(data => {
@@ -387,7 +400,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/naps/stop', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: napIndex, timestamp: new Date().toISOString() }),
+            body: JSON.stringify({ index: napIndex, timestamp: nowIso() }),
         })
         .then(res => res.json())
         .then(data => {
@@ -398,39 +411,38 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateTimerDisplay() {
-        if (!napTimerDisplay) return;
-        const timeLeft = napEndTime - Date.now();
+    if (!napTimerDisplay) return;
 
-        if (timeLeft <= 0) {
-            napTimerDisplay.textContent = '00:00';
+    const timeLeft = napEndTime - nowMs();
 
-            // stop the ticking
-            if (napTimerInterval) {
-              clearInterval(napTimerInterval);
-              napTimerInterval = null;
-            }
+    if (timeLeft <= 0) {
+        napTimerDisplay.textContent = '00:00';
 
-            // only notify/act once
-            if (!napOverNotified) {
-              napOverNotified = true;
-
-              // Option A: auto-stop the nap on backend (recommended)
-              if (appState.currentNap) {
-                stopNap();            // this will fetchTodaySchedule() on success
-              } else {
-                fetchTodaySchedule(); // fallback
-              }
-
-              alert("Nap time is over!");
-            }
-            return;
+        if (napTimerInterval) {
+        clearInterval(napTimerInterval);
+        napTimerInterval = null;
         }
 
-        const minutes = Math.floor((timeLeft / 1000 / 60) % 60);
-        const seconds = Math.floor((timeLeft / 1000) % 60);
-        napTimerDisplay.textContent =
-            `${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+        if (!napOverNotified) {
+        napOverNotified = true;
+        if (appState.currentNap) {
+            stopNap();   // this will refresh schedule
+        } else {
+            fetchTodaySchedule();
+        }
+        alert("Nap time is over!");
+        }
+        return;
     }
+
+    // ✅ total minutes remaining (not modulo 60)
+    const totalMinutes = Math.floor(timeLeft / 60000);
+    const seconds = Math.floor((timeLeft % 60000) / 1000);
+
+    napTimerDisplay.textContent =
+        `${String(totalMinutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
     
     /**
      * Opens the edit modal and populates it with data from the selected nap.
@@ -477,11 +489,23 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Initial Load ---
     fetchTodaySchedule();
 
-    // --- Escape-to-close, guarded if modal exists ---
+    // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
+        // Escape-to-close modal
         const modal = document.getElementById('edit-nap-modal');
         if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
             closeEditModal();
+            return; // Exclusive action
+        }
+
+        // dev: press ] to +5min, [ to -5min, \ to reset
+        if (['[', ']', '\\'].includes(e.key)) {
+            if (e.key === ']') clockOffsetMs += 5 * 60 * 1000;
+            if (e.key === '[') clockOffsetMs -= 5 * 60 * 1000;
+            if (e.key === '\\') clockOffsetMs = 0;
+            console.log(`DEV: Clock offset is now ${clockOffsetMs / 60000} minutes.`);
+            // Repaint anything time-based
+            if (appState.currentNap) updateTimerDisplay();
         }
     });
 });
