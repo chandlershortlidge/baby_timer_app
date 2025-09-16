@@ -274,54 +274,18 @@ def create_app(test_config=None):
             if conn:
                 conn.close()
 
-    @app.route('/api/naps/stop', methods=['POST'])
-    def stop_nap():
-        """Logs the end of a nap and triggers schedule adjustment logic."""
-        data = request.json
-        nap_index = data.get('index')
-        timestamp = data.get('timestamp')
-
-        if not all([nap_index, timestamp]):
-            return {"status": "error", "message": "Missing nap index or timestamp."}, 400
-
-        today_str = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d')
-        conn = get_db_connection()
-        try:
-            with conn:
-                day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))
-                day_row = day_cursor.fetchone()
-                if not day_row:
-                    return {"status": "error", "message": "Day not started. Log morning wake time first."}, 404
-                day_id = day_row['id']
-
-                cursor = conn.execute('''
-                    UPDATE nap_slots
-                    SET actual_end_at = ?, status = 'finished'
-                    WHERE day_id = ? AND nap_index = ?
-                ''', (timestamp, day_id, nap_index))
-
-                if cursor.rowcount == 0:
-                    return {"status": "error", "message": f"Nap with index {nap_index} not found for today."}, 404
-
-                # --- Trigger schedule adjustment ---
-                _adjust_schedule(conn, day_id, nap_index)
-
-            return {"status": "success", "message": f"Nap {nap_index} stop logged and schedule adjusted."}
-        except sqlite3.Error as e:
-            app.logger.error(f"Database error in stop_nap: {e}")
-            return {"status": "error", "message": "Failed to log nap stop."}, 500
-        finally:
-            if conn:
-                conn.close()
 
     @app.route('/api/naps/update', methods=['POST'])
     def update_nap():
-        """Updates the duration of a specific upcoming nap."""
+        """Updates the duration of a specific nap.
+        - upcoming  -> planned_duration_sec
+        - in_progress -> adjusted_duration_sec (affects the live timer)
+        """
         data = request.json
         nap_index = data.get('index')
         new_duration_min = data.get('duration_min')
 
-        if not all([nap_index, new_duration_min is not None]):
+        if nap_index is None or new_duration_min is None:
             return {"status": "error", "message": "Missing nap index or duration."}, 400
 
         try:
@@ -329,38 +293,50 @@ def create_app(test_config=None):
         except (ValueError, TypeError):
             return {"status": "error", "message": "Invalid duration format."}, 400
 
-        # For simplicity, we'll use today's date. A more complex app might need the date from the client.
         today_str = datetime.now().strftime('%Y-%m-%d')
         conn = get_db_connection()
         try:
             with conn:
-                day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))
-                day_row = day_cursor.fetchone()
+                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,)).fetchone()
                 if not day_row:
                     return {"status": "error", "message": "Day not started."}, 404
                 day_id = day_row['id']
 
-                # We only allow editing 'upcoming' naps to keep logic simple.
-                # The `planned_duration_sec` is updated, as this is the user's intended plan.
-                # `adjusted_duration_sec` will be recalculated later if a previous nap deviates.
-                cursor = conn.execute('''
-                    UPDATE nap_slots
-                    SET planned_duration_sec = ?, adjusted_duration_sec = NULL
-                    WHERE day_id = ? AND nap_index = ? AND status = 'upcoming'
-                ''', (new_duration_sec, day_id, nap_index))
+                # find the nap + its status
+                nap_row = conn.execute(
+                    'SELECT id, status FROM nap_slots WHERE day_id = ? AND nap_index = ?',
+                    (day_id, nap_index)
+                ).fetchone()
+                if not nap_row:
+                    return {"status": "error", "message": f"Nap with index {nap_index} not found."}, 404
+
+                status = nap_row['status']
+                if status == 'in_progress':
+                    # live nap: set adjusted (do not rewrite planned)
+                    cursor = conn.execute(
+                        'UPDATE nap_slots SET adjusted_duration_sec = ? WHERE id = ?',
+                        (new_duration_sec, nap_row['id'])
+                    )
+                elif status == 'upcoming':
+                    # future plan: rewrite planned and clear any prior adjustment
+                    cursor = conn.execute(
+                        'UPDATE nap_slots SET planned_duration_sec = ?, adjusted_duration_sec = NULL WHERE id = ?',
+                        (new_duration_sec, nap_row['id'])
+                    )
+                else:
+                    return {"status": "error",
+                            "message": f"Upcoming or in-progress nap with index {nap_index} not found or cannot be edited."}, 404
 
                 if cursor.rowcount == 0:
-                    return {"status": "error", "message": f"Upcoming nap with index {nap_index} not found or cannot be edited."}, 404
+                    return {"status": "error", "message": "No rows updated."}, 400
 
             return {"status": "success", "message": f"Nap {nap_index} duration updated."}
         except sqlite3.Error as e:
-            app.logger.error(f"Database error in update_nap: {e}")
+            current_app.logger.error(f"Database error in update_nap: {e}")
             return {"status": "error", "message": "Failed to update nap."}, 500
         finally:
-            # This is the crucial part that was missing
             if conn:
                 conn.close()
-
     return app
 
 if __name__ == '__main__':
