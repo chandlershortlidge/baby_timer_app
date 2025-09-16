@@ -337,6 +337,45 @@ def create_app(test_config=None):
         finally:
             if conn:
                 conn.close()
+    @app.route('/api/naps/stop', methods=['POST'])
+    def stop_nap():
+        """Logs the end of a nap and triggers schedule adjustment logic."""
+        data = request.json
+        nap_index = data.get('index')
+        timestamp = data.get('timestamp')
+
+        if not all([nap_index, timestamp]):
+            return {"status": "error", "message": "Missing nap index or timestamp."}, 400
+
+        today_str = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+        conn = get_db_connection()
+        try:
+            with conn:
+                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,)).fetchone()
+                if not day_row:
+                    return {"status": "error", "message": "Day not started. Log morning wake time first."}, 404
+                day_id = day_row['id']
+
+                cursor = conn.execute('''
+                    UPDATE nap_slots
+                    SET actual_end_at = ?, status = 'finished'
+                    WHERE day_id = ? AND nap_index = ?
+                ''', (timestamp, day_id, nap_index))
+
+                if cursor.rowcount == 0:
+                    return {"status": "error", "message": f"Nap with index {nap_index} not found for today."}, 404
+
+                # adjust remaining schedule based on the finished nap
+                _adjust_schedule(conn, day_id, nap_index)
+
+            return {"status": "success", "message": f"Nap {nap_index} stop logged and schedule adjusted."}
+        except sqlite3.Error as e:
+            current_app.logger.error(f"Database error in stop_nap: {e}")
+            return {"status": "error", "message": "Failed to log nap stop."}, 500
+        finally:
+            if conn:
+                conn.close()
+            
     return app
 
 if __name__ == '__main__':
