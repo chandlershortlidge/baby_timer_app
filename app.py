@@ -7,6 +7,8 @@ from flask import Flask, render_template, request, current_app
 from .config import Config
 
 DEFAULT_AWAKE_BUDGET_SEC = 10 * 60 * 60
+DEFAULT_NAP_ALARM_LEAD_SEC = 20 * 60
+DEFAULT_NAP_END_REMINDER_LEAD_SEC = 20 * 60
 
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""
@@ -37,6 +39,7 @@ def create_db(app):
             bedtime_start_at TEXT,
             total_night_sleep_sec INTEGER,
             daily_awake_budget_sec INTEGER,
+            nap_alarm_lead_sec INTEGER,
             projected_bedtime_at TEXT
         )
     ''')
@@ -46,11 +49,26 @@ def create_db(app):
         "ALTER TABLE days ADD COLUMN bedtime_start_at TEXT",
         "ALTER TABLE days ADD COLUMN total_night_sleep_sec INTEGER",
         "ALTER TABLE days ADD COLUMN daily_awake_budget_sec INTEGER",
+        "ALTER TABLE days ADD COLUMN nap_alarm_lead_sec INTEGER",
     ):
         try:
             c.execute(ddl)
         except sqlite3.OperationalError:
             pass
+
+    default_end_reminder = str(app.config.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', DEFAULT_NAP_END_REMINDER_LEAD_SEC))
+    c.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING',
+        ('nap_end_reminder_lead_sec', default_end_reminder)
+    )
+
+    # 'settings' stores global key/value preferences.
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
 
     # 'nap_slots' holds the plan and actuals for each individual nap.
     c.execute('''
@@ -132,6 +150,20 @@ def _adjust_schedule(conn, day_id, finished_nap_index):
         conn.execute('UPDATE nap_slots SET adjusted_duration_sec = ? WHERE id = ?', (final_duration, nap['id']))
         current_app.logger.info(f"Nap {nap['nap_index']} duration adjusted to {final_duration:.0f} seconds.")
 
+
+def _get_setting(conn, key, default=None):
+    row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+    if not row:
+        return default
+    return row['value']
+
+
+def _set_setting(conn, key, value):
+    conn.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        (key, value)
+    )
+
 def create_app(test_config=None):
     """
     Application factory for the Flask app.
@@ -184,9 +216,12 @@ def create_app(test_config=None):
                 response = {"status": "not_found", "message": "Today's schedule has not been started yet."}
                 if sleep_session:
                     response["sleep_session"] = sleep_session
+                response["alarm_lead_time_sec"] = current_app.config.get('DEFAULT_NAP_ALARM_LEAD_SEC', DEFAULT_NAP_ALARM_LEAD_SEC)
                 return response
 
             day_data = dict(day_row)
+            if day_data.get('nap_alarm_lead_sec') is None:
+                day_data['nap_alarm_lead_sec'] = current_app.config.get('DEFAULT_NAP_ALARM_LEAD_SEC', DEFAULT_NAP_ALARM_LEAD_SEC)
             day_id = day_data['id']
 
             naps_cursor = conn.execute(
@@ -273,15 +308,17 @@ def create_app(test_config=None):
 
                     # Use "UPSERT" to either insert a new day or update the existing one
                     awake_budget_sec = app.config.get('DEFAULT_AWAKE_BUDGET_SEC', DEFAULT_AWAKE_BUDGET_SEC)
+                    alarm_lead_sec = app.config.get('DEFAULT_NAP_ALARM_LEAD_SEC', DEFAULT_NAP_ALARM_LEAD_SEC)
 
                     conn.execute('''
-                        INSERT INTO days (date, first_wake_at, bedtime_start_at, total_night_sleep_sec, daily_awake_budget_sec)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO days (date, first_wake_at, bedtime_start_at, total_night_sleep_sec, daily_awake_budget_sec, nap_alarm_lead_sec)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(date) DO UPDATE SET first_wake_at = excluded.first_wake_at,
                                                       bedtime_start_at = excluded.bedtime_start_at,
                                                       total_night_sleep_sec = excluded.total_night_sleep_sec,
-                                                      daily_awake_budget_sec = COALESCE(days.daily_awake_budget_sec, excluded.daily_awake_budget_sec)
-                    ''', (today_str, timestamp, bedtime_start_at, total_sleep_sec, awake_budget_sec))
+                                                      daily_awake_budget_sec = COALESCE(days.daily_awake_budget_sec, excluded.daily_awake_budget_sec),
+                                                      nap_alarm_lead_sec = COALESCE(days.nap_alarm_lead_sec, excluded.nap_alarm_lead_sec)
+                    ''', (today_str, timestamp, bedtime_start_at, total_sleep_sec, awake_budget_sec, alarm_lead_sec))
 
                     # Get the ID of the day we just created/updated
                     day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))
@@ -427,6 +464,91 @@ def create_app(test_config=None):
         except sqlite3.Error as e:
             current_app.logger.error(f"Database error in update_nap: {e}")
             return {"status": "error", "message": "Failed to update nap."}, 500
+        finally:
+            if conn:
+                conn.close()
+
+    @app.route('/api/day/alarm', methods=['POST'])
+    def update_alarm():
+        """Updates the lead time for upcoming nap alarms."""
+        data = request.json or {}
+        lead_time_sec = data.get('lead_time_sec')
+        if lead_time_sec is None:
+            return {"status": "error", "message": "Missing lead_time_sec."}, 400
+
+        try:
+            lead_time_sec = int(lead_time_sec)
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "Invalid lead_time_sec."}, 400
+
+        if lead_time_sec < 0:
+            return {"status": "error", "message": "Lead time must be non-negative."}, 400
+
+        request_date = data.get('date')
+        if request_date:
+            try:
+                if 'T' in request_date:
+                    target_date = datetime.fromisoformat(request_date.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                else:
+                    target_date = request_date.strip()
+            except ValueError:
+                return {"status": "error", "message": "Invalid date format."}, 400
+        else:
+            target_date = datetime.now().strftime('%Y-%m-%d')
+
+        conn = get_db_connection()
+        try:
+            with conn:
+                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (target_date,)).fetchone()
+                if not day_row:
+                    return {"status": "error", "message": "Day not started."}, 404
+
+                conn.execute('UPDATE days SET nap_alarm_lead_sec = ? WHERE id = ?', (lead_time_sec, day_row['id']))
+
+            return {"status": "success", "lead_time_sec": lead_time_sec}
+        except sqlite3.Error as e:
+            current_app.logger.error(f"Database error in update_alarm: {e}")
+            return {"status": "error", "message": "Failed to update alarm settings."}, 500
+        finally:
+            if conn:
+                conn.close()
+
+    @app.route('/api/settings/reminder', methods=['GET', 'PATCH'])
+    def reminder_settings():
+        conn = get_db_connection()
+        try:
+            if request.method == 'GET':
+                value = _get_setting(
+                    conn,
+                    'nap_end_reminder_lead_sec',
+                    str(current_app.config.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', DEFAULT_NAP_END_REMINDER_LEAD_SEC))
+                )
+                try:
+                    lead_sec = int(value)
+                except (TypeError, ValueError):
+                    lead_sec = current_app.config.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', DEFAULT_NAP_END_REMINDER_LEAD_SEC)
+                return {"status": "success", "lead_time_sec": max(0, lead_sec)}
+
+            data = request.json or {}
+            lead_time_sec = data.get('lead_time_sec')
+            if lead_time_sec is None:
+                return {"status": "error", "message": "Missing lead_time_sec."}, 400
+
+            try:
+                lead_time_sec = int(lead_time_sec)
+            except (TypeError, ValueError):
+                return {"status": "error", "message": "Invalid lead_time_sec."}, 400
+
+            if lead_time_sec < 0:
+                return {"status": "error", "message": "Lead time must be non-negative."}, 400
+
+            with conn:
+                _set_setting(conn, 'nap_end_reminder_lead_sec', str(lead_time_sec))
+
+            return {"status": "success", "lead_time_sec": lead_time_sec}
+        except sqlite3.Error as e:
+            current_app.logger.error(f"Database error in reminder_settings: {e}")
+            return {"status": "error", "message": "Failed to load reminder settings."}, 500
         finally:
             if conn:
                 conn.close()

@@ -20,3 +20,9 @@ class Config:
     # Define the database file. It's good practice to store this in the
     # instance folder, which is not part of the version-controlled code.
     DATABASE = 'nap_plans.db'
+
+    # Default lead time (in seconds) for upcoming nap alarms.
+    DEFAULT_NAP_ALARM_LEAD_SEC = int(os.environ.get('DEFAULT_NAP_ALARM_LEAD_SEC', 20 * 60))
+
+    # Default lead time for end-of-nap reminders.
+    DEFAULT_NAP_END_REMINDER_LEAD_SEC = int(os.environ.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', 20 * 60))

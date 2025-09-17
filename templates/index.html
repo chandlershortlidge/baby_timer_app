@@ -10,90 +10,98 @@
 <body class="bg-gradient-to-br from-gray-50 to-blue-50/30 text-gray-800">
   <div class="max-w-md mx-auto min-h-screen p-4 space-y-6">
 
-    <!-- Bedtime toggle -->
-    <button id="bedtime-btn"
-      class="w-full bg-indigo-600 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-colors">
-      Start Bedtime
-    </button>
-
-    <!-- Status card -->
-    <div id="status-card" class="bg-yellow-50 rounded-3xl p-8 text-center shadow-lg">
-      <!-- Icon -->
-      <div id="status-icon-container" class="w-12 h-12 mx-auto text-yellow-500">
-        <!-- Sun (awake) -->
-        <svg id="awake-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm0-14a1 1 0 0 1 1-1h0a1 1 0 1 1-2 0h0a1 1 0 0 1 1-1ZM12 21a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm9-9a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM3 12a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm14.95-6.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414ZM4.636 18.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414Zm14.142 1.414a1 1 0 1 1-1.414-1.414 1 1 0 0 1 1.414 1.414ZM6.05 5.636A1 1 0 1 1 4.636 4.222 1 1 0 0 1 6.05 5.636Z"/>
-        </svg>
-        <!-- Moon (asleep) -->
-        <svg id="asleep-icon" class="hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3c.2 0 .41.01.61.03a7 7 0 0 0 9.15 9.15c.02.2.03.41.03.61Z"/>
-        </svg>
-      </div>
-
-      <!-- “Baby is awake!/asleep!” -->
-      <p id="status-message" class="mt-4 text-xl font-bold text-yellow-800">
-        Baby is awake!
-      </p>
-
-      <!-- “Next nap at / Next wake time is” -->
-      <p id="next-nap-container" class="mt-2">
-        <span id="next-event-label" class="text-lg text-yellow-700">Next nap at</span>
-      </p>
-
-      <!-- Big time -->
-      <div class="mt-1">
-        <span id="next-event-time" class="text-4xl font-extrabold text-yellow-800">9:30 AM</span>
-      </div>
-
-      <div id="sleep-summary" class="mt-4 hidden text-sm text-gray-600">
-        <p id="sleep-duration-text" class="font-semibold">Night sleep: --</p>
-        <p id="wake-time-text" class="mt-1">Woke at --</p>
-      </div>
-    </div>
-
-    <section id="today-summary" class="hidden">
-      <div class="mt-3 rounded-3xl bg-white shadow-lg p-4 space-y-4">
-        <div class="flex justify-between text-gray-600 text-xs uppercase tracking-wide">
-          <span>Today Summary</span>
-          <span id="summary-date"></span>
-        </div>
-
-        <div class="grid grid-cols-2 gap-4">
-          <div class="rounded-2xl bg-blue-50 p-4">
-            <p class="text-xs font-medium text-blue-700 flex items-center gap-2">
-              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600">☀️</span>
-              Awake today
-            </p>
-            <p id="awake-total" class="mt-1 text-2xl font-semibold text-blue-900">--</p>
+    <section id="sleep-summary" class="rounded-3xl bg-white shadow-lg p-6 space-y-6">
+      <header class="flex items-start justify-between">
+        <div class="flex items-start gap-3">
+          <div id="sleep-state-icon" class="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-500">
+            <svg id="awake-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="h-7 w-7">
+              <path d="M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm0-14a1 1 0 0 1 1-1h0a1 1 0 1 1-2 0h0a1 1 0 0 1 1-1ZM12 21a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm9-9a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM3 12a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm14.95-6.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414ZM4.636 18.364a1 1 0 1 1 1.414 1.414 1 1 0 0 1-1.414-1.414Zm14.142 1.414a1 1 0 1 1-1.414-1.414 1 1 0 0 1 1.414 1.414ZM6.05 5.636A1 1 0 1 1 4.636 4.222 1 1 0 0 1 6.05 5.636Z"/>
+            </svg>
+            <svg id="asleep-icon" class="hidden h-7 w-7" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3c.2 0 .41.01.61.03a7 7 0 0 0 9.15 9.15c.02.2.03.41.03.61Z"/>
+            </svg>
           </div>
-          <div class="rounded-2xl bg-violet-50 p-4">
-            <p class="text-xs font-medium text-violet-700 flex items-center gap-2">
-              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-violet-600">💤</span>
-              Total nap time
-            </p>
-            <p id="nap-total" class="mt-1 text-2xl font-semibold text-violet-900">--</p>
+          <div>
+            <p id="sleep-state-text" class="text-xl font-bold text-amber-700">Baby is awake</p>
+            <p id="sleep-state-subtext" class="text-sm text-amber-600">Next nap at</p>
           </div>
         </div>
+        <div class="text-right">
+          <p id="sleep-state-time" class="text-4xl font-extrabold text-amber-700">--:--</p>
+        </div>
+      </header>
 
-        <div>
-          <div class="flex justify-between text-xs text-gray-500">
-            <span>Awake budget</span>
-            <span id="awake-budget-text">--</span>
+      <p id="sleep-meta" class="text-xs text-gray-500">Down at — • Woke at —</p>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="rounded-2xl bg-blue-50 p-4">
+          <p class="text-xs font-medium text-blue-700 flex items-center gap-2">
+            <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600">☀️</span>
+            Awake today
+          </p>
+          <p id="awake-today" class="mt-1 text-2xl font-semibold text-blue-900">--</p>
+        </div>
+        <div class="rounded-2xl bg-violet-50 p-4">
+          <p class="text-xs font-medium text-violet-700 flex items-center gap-2">
+            <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-violet-600">💤</span>
+            Total nap time
+          </p>
+          <p id="total-nap-today" class="mt-1 text-2xl font-semibold text-violet-900">--</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex justify-between text-xs text-gray-500">
+          <span>Awake budget</span>
+          <span id="awake-budget-label">--</span>
+        </div>
+        <div class="mt-2 h-3 rounded-full bg-gray-200">
+          <div id="awake-budget-bar" class="h-full rounded-full bg-emerald-500" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <div class="space-y-4">
+        <div id="upcoming-alarm-row" class="flex items-center justify-between text-sm text-gray-700">
+          <span class="font-semibold">Upcoming nap alarm</span>
+          <button id="alarm-lead-btn"
+                  class="flex h-11 items-center gap-2 rounded-xl bg-white px-4 font-semibold text-indigo-600 shadow-sm ring-1 ring-indigo-200 transition disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button">
+            <span id="alarm-lead-text">--</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+        <div id="end-reminder-row" class="hidden flex items-start justify-between text-sm text-gray-700">
+          <div>
+            <p class="font-semibold">End-of-nap reminder</p>
+            <p id="end-reminder-helper" class="text-xs text-gray-500">Set after nap starts.</p>
           </div>
-          <div id="awake-progress" class="mt-2 h-3 rounded-full bg-gray-200">
-            <div class="h-full rounded-full bg-emerald-500" style="width: 0%;"></div>
+          <button id="end-reminder-btn"
+                  type="button"
+                  class="flex h-11 items-center gap-2 rounded-xl bg-indigo-600 px-4 font-semibold text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring disabled:cursor-not-allowed disabled:opacity-60">
+            <span id="end-reminder-text">Off</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="end-reminder-actions" class="hidden">
+        <div class="flex items-center justify-between rounded-xl bg-indigo-100/70 px-4 py-2 text-sm text-indigo-800">
+          <span class="font-semibold">Reminder fired</span>
+          <div class="flex items-center gap-3">
+            <button id="end-reminder-snooze" type="button" class="rounded-lg bg-white px-3 py-1 font-semibold text-indigo-700 shadow hover:bg-indigo-50">Snooze 2 min</button>
+            <button id="end-reminder-dismiss" type="button" class="rounded-lg bg-white/70 px-3 py-1 font-semibold text-indigo-700 hover:bg-white">Dismiss</button>
           </div>
         </div>
       </div>
+
+      <button id="nap-control-btn"
+        class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
+        Start Nap
+      </button>
+      <p id="nap-helper-text" class="hidden text-sm text-gray-500">End bedtime first.</p>
     </section>
 
-    <!-- Start/Stop Nap -->
-    <button id="nap-control-btn"
-      class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
-      Start Nap
-    </button>
-
-    <!-- Big timer -->
+    <!-- Nap timer -->
     <div id="nap-timer-container" class="hidden rounded-3xl bg-indigo-50 p-6 text-center shadow-lg">
       <div id="nap-timer-display" class="text-7xl font-extrabold tracking-tight text-indigo-800">45:00</div>
       <p class="mt-2 text-sm text-indigo-600">
@@ -139,7 +147,39 @@
     </div>
   </div>
 
+    <footer id="bedtime-footer" class="sticky bottom-4 mt-6 rounded-3xl bg-white p-4 shadow-lg">
+      <div class="space-y-3">
+        <p id="bedtime-helper" class="text-sm text-gray-500">Start bedtime when you're ready to log night sleep.</p>
+        <button id="bedtime-btn"
+                class="relative flex w-full items-center justify-center gap-2 rounded-2xl bg-purple-600 px-6 py-4 text-lg font-semibold text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-60">
+          <span id="bedtime-btn-label">Start Bedtime</span>
+          <span id="bedtime-press-indicator" class="absolute inset-0 rounded-2xl border-2 border-white/40 opacity-0 transition"></span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
   <!-- External JS (the single source of truth) -->
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+  <div id="toast-container" class="pointer-events-none fixed inset-x-0 top-4 z-50 flex flex-col items-center space-y-2"></div>
+  <div id="aria-live-region" class="sr-only" aria-live="polite"></div>
+
+  <div id="end-reminder-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="end-reminder-title">
+    <div class="absolute inset-0 bg-black/50" data-end-reminder-overlay></div>
+    <div class="relative mx-auto mt-24 w-11/12 max-w-md rounded-2xl bg-white p-6 shadow-xl">
+      <h3 id="end-reminder-title" class="text-lg font-semibold text-gray-800">End-of-nap reminder</h3>
+      <div id="end-reminder-options" class="mt-4 space-y-2" role="radiogroup" aria-labelledby="end-reminder-title"></div>
+      <label class="mt-4 flex items-center gap-2 text-sm text-gray-700">
+        <input id="end-reminder-oneoff" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" checked />
+        This nap only
+      </label>
+      <p id="end-reminder-modal-helper" class="mt-2 text-xs text-gray-500">Changes apply to this nap unless you turn off the toggle.</p>
+      <div class="mt-6 flex justify-end gap-3">
+        <button id="end-reminder-cancel" class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200" type="button">Cancel</button>
+        <button id="end-reminder-save" class="rounded-xl bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700" type="button">Save</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
