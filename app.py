@@ -6,6 +6,8 @@ from flask import Flask, render_template, request, current_app
 # Import the configuration
 from .config import Config
 
+DEFAULT_AWAKE_BUDGET_SEC = 10 * 60 * 60
+
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""
     db_path = os.path.join(current_app.instance_path, current_app.config['DATABASE'])
@@ -32,10 +34,23 @@ def create_db(app):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL UNIQUE,
             first_wake_at TEXT,
+            bedtime_start_at TEXT,
+            total_night_sleep_sec INTEGER,
             daily_awake_budget_sec INTEGER,
             projected_bedtime_at TEXT
         )
     ''')
+
+    # Ensure new columns exist for evolving schema without clobbering data.
+    for ddl in (
+        "ALTER TABLE days ADD COLUMN bedtime_start_at TEXT",
+        "ALTER TABLE days ADD COLUMN total_night_sleep_sec INTEGER",
+        "ALTER TABLE days ADD COLUMN daily_awake_budget_sec INTEGER",
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
 
     # 'nap_slots' holds the plan and actuals for each individual nap.
     c.execute('''
@@ -49,6 +64,16 @@ def create_db(app):
             actual_end_at TEXT,
             status TEXT NOT NULL DEFAULT 'upcoming',
             FOREIGN KEY (day_id) REFERENCES days (id)
+        )
+    ''')
+
+    # Track bedtime sessions to calculate overnight sleep duration.
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS sleep_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_at TEXT NOT NULL,
+            end_at TEXT,
+            total_sleep_sec INTEGER
         )
     ''')
     conn.commit()
@@ -149,8 +174,17 @@ def create_app(test_config=None):
             day_cursor = conn.execute('SELECT * FROM days WHERE date = ?', (today_str,))
             day_row = day_cursor.fetchone()
 
+            sleep_cursor = conn.execute(
+                'SELECT start_at FROM sleep_sessions WHERE end_at IS NULL ORDER BY id DESC LIMIT 1'
+            )
+            sleep_row = sleep_cursor.fetchone()
+            sleep_session = dict(sleep_row) if sleep_row else None
+
             if not day_row:
-                return {"status": "not_found", "message": "Today's schedule has not been started yet."}
+                response = {"status": "not_found", "message": "Today's schedule has not been started yet."}
+                if sleep_session:
+                    response["sleep_session"] = sleep_session
+                return response
 
             day_data = dict(day_row)
             day_id = day_data['id']
@@ -165,6 +199,8 @@ def create_app(test_config=None):
                 "day": day_data,
                 "naps": naps_data
             }
+            if sleep_session:
+                response_data["sleep_session"] = sleep_session
             return response_data
 
         except sqlite3.Error as e:
@@ -184,18 +220,68 @@ def create_app(test_config=None):
         event_type = data.get('type')
         timestamp = data.get('timestamp')
 
+        if event_type == 'sleep' and timestamp:
+            conn = get_db_connection()
+            try:
+                with conn:
+                    open_session = conn.execute(
+                        'SELECT id FROM sleep_sessions WHERE end_at IS NULL ORDER BY id DESC LIMIT 1'
+                    ).fetchone()
+                    if open_session:
+                        conn.execute(
+                            'UPDATE sleep_sessions SET start_at = ?, end_at = NULL, total_sleep_sec = NULL WHERE id = ?',
+                            (timestamp, open_session['id'])
+                        )
+                    else:
+                        conn.execute(
+                            'INSERT INTO sleep_sessions (start_at) VALUES (?)',
+                            (timestamp,)
+                        )
+                return {"status": "success", "message": "Bedtime started."}
+            except sqlite3.Error as e:
+                app.logger.error(f"Database error in log_bedtime sleep: {e}")
+                return {"status": "error", "message": "Failed to log bedtime start."}, 500
+            finally:
+                if conn:
+                    conn.close()
+
         if event_type == 'wake' and timestamp:
             # Use the timestamp from the request to determine the date
             today_str = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d')
             conn = get_db_connection()
             try:
                 with conn:
+                    bedtime_start_at = None
+                    total_sleep_sec = None
+
+                    sleep_row = conn.execute(
+                        'SELECT id, start_at FROM sleep_sessions WHERE end_at IS NULL ORDER BY id DESC LIMIT 1'
+                    ).fetchone()
+
+                    if sleep_row and sleep_row['start_at']:
+                        try:
+                            start_dt = datetime.fromisoformat(sleep_row['start_at'].replace('Z', '+00:00'))
+                            end_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            total_sleep_sec = max(0, int((end_dt - start_dt).total_seconds()))
+                            bedtime_start_at = sleep_row['start_at']
+                            conn.execute(
+                                'UPDATE sleep_sessions SET end_at = ?, total_sleep_sec = ? WHERE id = ?',
+                                (timestamp, total_sleep_sec, sleep_row['id'])
+                            )
+                        except ValueError:
+                            current_app.logger.warning("Invalid timestamp encountered while closing sleep session.")
+
                     # Use "UPSERT" to either insert a new day or update the existing one
+                    awake_budget_sec = app.config.get('DEFAULT_AWAKE_BUDGET_SEC', DEFAULT_AWAKE_BUDGET_SEC)
+
                     conn.execute('''
-                        INSERT INTO days (date, first_wake_at)
-                        VALUES (?, ?)
-                        ON CONFLICT(date) DO UPDATE SET first_wake_at = excluded.first_wake_at
-                    ''', (today_str, timestamp))
+                        INSERT INTO days (date, first_wake_at, bedtime_start_at, total_night_sleep_sec, daily_awake_budget_sec)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(date) DO UPDATE SET first_wake_at = excluded.first_wake_at,
+                                                      bedtime_start_at = excluded.bedtime_start_at,
+                                                      total_night_sleep_sec = excluded.total_night_sleep_sec,
+                                                      daily_awake_budget_sec = COALESCE(days.daily_awake_budget_sec, excluded.daily_awake_budget_sec)
+                    ''', (today_str, timestamp, bedtime_start_at, total_sleep_sec, awake_budget_sec))
 
                     # Get the ID of the day we just created/updated
                     day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))
@@ -228,12 +314,6 @@ def create_app(test_config=None):
             finally:
                 if conn:
                     conn.close()
-
-        if event_type == 'sleep' and timestamp:
-            today_str = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d')
-            app.logger.info(f"Received nighttime sleep event for {today_str} at {timestamp}")
-            # Future logic: finalize today's schedule, calculate total awake time, etc.
-            return {"status": "success", "message": "Nighttime sleep event received."}
 
         return {"status": "error", "message": "Invalid event type or missing timestamp."}, 400
 
@@ -280,10 +360,13 @@ def create_app(test_config=None):
         """Updates the duration of a specific nap.
         - upcoming  -> planned_duration_sec
         - in_progress -> adjusted_duration_sec (affects the live timer)
+        Accepts an optional "date" field so clients in different timezones can
+        target the intended day explicitly.
         """
         data = request.json
         nap_index = data.get('index')
         new_duration_min = data.get('duration_min')
+        request_date = data.get('date')
 
         if nap_index is None or new_duration_min is None:
             return {"status": "error", "message": "Missing nap index or duration."}, 400
@@ -293,11 +376,21 @@ def create_app(test_config=None):
         except (ValueError, TypeError):
             return {"status": "error", "message": "Invalid duration format."}, 400
 
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        if request_date:
+            try:
+                if 'T' in request_date:
+                    target_date = datetime.fromisoformat(request_date.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                else:
+                    target_date = request_date.strip()
+            except ValueError:
+                return {"status": "error", "message": "Invalid date format."}, 400
+        else:
+            target_date = datetime.now().strftime('%Y-%m-%d')
+
         conn = get_db_connection()
         try:
             with conn:
-                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,)).fetchone()
+                day_row = conn.execute('SELECT id FROM days WHERE date = ?', (target_date,)).fetchone()
                 if not day_row:
                     return {"status": "error", "message": "Day not started."}, 404
                 day_id = day_row['id']
@@ -337,6 +430,7 @@ def create_app(test_config=None):
         finally:
             if conn:
                 conn.close()
+
     @app.route('/api/naps/stop', methods=['POST'])
     def stop_nap():
         """Logs the end of a nap and triggers schedule adjustment logic."""

@@ -7,10 +7,15 @@ document.addEventListener('DOMContentLoaded', function() {
         naps: [],
         currentNap: null,
         nextNap: null,
+        sleepSession: null,
     };
     let currentlyEditingNapIndex = null;
     let napTimerInterval = null;
     let napEndTime = 0;
+    let sleepInfoInterval = null;
+    let isBedtimeActive = false;
+    let setBedtimeUIState = () => {};
+    let summaryTicker = null;
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -44,6 +49,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
+    const sleepInfoContainer = document.getElementById('sleep-summary');
+    const sleepDurationText = document.getElementById('sleep-duration-text');
+    const wakeTimeText = document.getElementById('wake-time-text');
+    const todaySummary = document.getElementById('today-summary');
+    const summaryDateText = document.getElementById('summary-date');
+    const awakeTotalText = document.getElementById('awake-total');
+    const napTotalText = document.getElementById('nap-total');
+    const awakeBudgetText = document.getElementById('awake-budget-text');
+    const awakeProgressBar = todaySummary ? todaySummary.querySelector('#awake-progress > div') : null;
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
     function ensureEditModal() {
@@ -104,56 +118,100 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Centralized Event Listeners ---
     if (bedtimeBtn) {
-      let isBedtimeActive = false;
-    
-      bedtimeBtn.addEventListener('click', () => {
-        isBedtimeActive = !isBedtimeActive;
-    
-        if (isBedtimeActive) {
-          // Button look
-          bedtimeBtn.textContent = 'End Bedtime';
-          bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-          bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
-    
-          // --- NEW: reflect night sleep in the UI ---
-          // Treat this like "asleep" with no known wake time yet
-          setBabyStatus(true, null);
-          if (nextEventLabel) nextEventLabel.textContent = 'Next wake time is';
-          if (nextEventTime)  nextEventTime.textContent  = 'N/A';
-    
-          // Nap controls off during bedtime
-          if (napControlBtn) {
+      const applyBedtimeActiveUI = () => {
+        bedtimeBtn.textContent = 'End Bedtime';
+        bedtimeBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+        bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+        if (napControlBtn) {
+          napControlBtn.disabled = true;
+          napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+        if (napTimerContainer) napTimerContainer.style.display = 'none';
+      };
+
+      const applyBedtimeInactiveUI = () => {
+        bedtimeBtn.textContent = 'Start Bedtime';
+        bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+        bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+        if (napControlBtn) {
+          if (appState.day && appState.nextNap) {
+            napControlBtn.disabled = false;
+            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          } else {
             napControlBtn.disabled = true;
             napControlBtn.classList.add('opacity-50', 'cursor-not-allowed');
           }
-          if (napTimerContainer) napTimerContainer.style.display = 'none';
-    
-          // No API call here; bedtime "start" is just UI
+        }
+      };
+
+      const updateBedtimeUI = (active) => {
+        isBedtimeActive = active;
+        if (active) {
+          applyBedtimeActiveUI();
         } else {
-          // Turning bedtime OFF = morning wake → log it and rebuild schedule
-          bedtimeBtn.textContent = 'Start Bedtime';
-          bedtimeBtn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
-          bedtimeBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-    
-          // Re-enable nap control (actual enable/disable will be decided by renderSchedule)
-          if (napControlBtn) {
-            napControlBtn.disabled = false;
-            napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-          }
-    
+          applyBedtimeInactiveUI();
+        }
+      };
+
+      bedtimeBtn.addEventListener('click', () => {
+        const togglingToActive = !isBedtimeActive;
+        const timestamp = nowIso();
+
+        if (togglingToActive) {
+          const previousSession = appState.sleepSession;
+          setBabyStatus(true, null);
+          if (nextEventLabel) nextEventLabel.textContent = 'Next wake time is';
+          if (nextEventTime) nextEventTime.textContent = 'N/A';
+          updateBedtimeUI(true);
+          appState.sleepSession = { start_at: timestamp };
+          updateSleepSummary();
+          updateTodaySummary();
+
           fetch('/api/day/bedtime', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'wake', timestamp: nowIso() })
+            body: JSON.stringify({ type: 'sleep', timestamp })
           })
           .then(res => res.json())
           .then(data => {
-            console.log('Wake time logged:', data);
+            if (data.status !== 'success') throw new Error(data.message || 'Failed to start bedtime');
+            isBedtimeActive = true;
+          })
+          .catch(err => {
+            console.error(err);
+            appState.sleepSession = previousSession;
+            updateSleepSummary();
+            updateTodaySummary();
+            updateBedtimeUI(false);
+            fetchTodaySchedule();
+          });
+        } else {
+          const previousSession = appState.sleepSession;
+          setBabyStatus(false, null);
+          updateBedtimeUI(false);
+
+          fetch('/api/day/bedtime', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'wake', timestamp })
+          })
+          .then(res => res.json())
+          .then(data => {
+            if (data.status !== 'success') throw new Error(data.message || 'Failed to end bedtime');
+            isBedtimeActive = false;
             fetchTodaySchedule();
           })
-          .catch(console.error);
+          .catch(err => {
+            console.error(err);
+            appState.sleepSession = previousSession;
+            updateBedtimeUI(true);
+            updateSleepSummary();
+            updateTodaySummary();
+          });
         }
       });
+
+      setBedtimeUIState = updateBedtimeUI;
     }
 
     if (napControlBtn) {
@@ -221,7 +279,11 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/naps/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: editingIndexNum, duration_min: newDurationMin })
+            body: JSON.stringify({
+                index: editingIndexNum,
+                duration_min: newDurationMin,
+                date: appState.day?.date || undefined,
+            })
         })
         .then(res => res.json())
         .then(data => {
@@ -256,10 +318,13 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const response = await fetch('/api/day/today');
             const data = await response.json();
+            appState.sleepSession = data.sleep_session || null;
             if (data.status === 'not_found') {
                 console.log("No schedule found for today. Ready to start a new day.");
                 appState.day = null;
                 appState.naps = [];
+                appState.currentNap = null;
+                appState.nextNap = null;
                 renderSchedule();
                 return;
             }
@@ -276,11 +341,34 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderSchedule() {
         if (!scheduleList || !scheduleSummary || !statusMessage || !nextNapContainer) return;
+        const bedtimeActive = Boolean(appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at);
+        setBedtimeUIState(bedtimeActive);
         scheduleList.innerHTML = '';
         if (!appState.day) {
-            statusMessage.textContent = "Ready to start the day!";
-            scheduleSummary.textContent = "Wake up time not logged yet.";
+            if (bedtimeActive) {
+                setBabyStatus(true, null);
+                statusMessage.textContent = "Baby is asleep!";
+                scheduleSummary.textContent = "Night sleep in progress.";
+            } else {
+                setBabyStatus(false, null);
+                statusMessage.textContent = "Ready to start the day!";
+                scheduleSummary.textContent = "Wake up time not logged yet.";
+            }
             if (nextNapContainer) nextNapContainer.style.display = 'none';
+            if (napTimerInterval) {
+                clearInterval(napTimerInterval);
+                napTimerInterval = null;
+            }
+            if (napTimerDisplay) napTimerDisplay.textContent = '00:00';
+            napOverNotified = false;
+            if (napTimerContainer) napTimerContainer.style.display = 'none';
+            if (napControlBtn) {
+                napControlBtn.textContent = 'Start Nap';
+                napControlBtn.disabled = true;
+                napControlBtn.className = 'w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors opacity-50 cursor-not-allowed';
+            }
+            updateSleepSummary();
+            updateTodaySummary();
             return;
         }
         if (nextNapContainer) nextNapContainer.style.display = 'block';
@@ -343,6 +431,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 napControlBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             }
         }
+
+        updateSleepSummary();
+        updateTodaySummary();
     }
 
     function setBabyStatus(isAsleep, eventTime) {
@@ -486,6 +577,216 @@ document.addEventListener('DOMContentLoaded', function() {
         return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     }
 
+    function formatDuration(totalSeconds) {
+        if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '--';
+        const totalMinutes = Math.round(totalSeconds / 60);
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const parts = [];
+        if (hours > 0) parts.push(`${hours} h`);
+        if (minutes > 0 || parts.length === 0) parts.push(`${minutes} m`);
+        return parts.join(' ');
+    }
+
+    function secondsSince(startIso) {
+        const startMs = new Date(startIso).getTime();
+        if (Number.isNaN(startMs)) return null;
+        return Math.max(0, Math.floor((nowMs() - startMs) / 1000));
+    }
+
+    function stopSleepInfoTicker() {
+        if (sleepInfoInterval) {
+            clearInterval(sleepInfoInterval);
+            sleepInfoInterval = null;
+        }
+    }
+
+    function updateActiveSleepDuration(startIso) {
+        if (!wakeTimeText) return;
+        const elapsedSec = secondsSince(startIso);
+        if (elapsedSec === null) return;
+        wakeTimeText.textContent = `Asleep for ${formatDuration(elapsedSec)}`;
+    }
+
+    function updateSleepSummary() {
+        if (!sleepInfoContainer) return;
+
+        const activeSession = appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at;
+        const totalSleepSeconds = Number(appState.day?.total_night_sleep_sec);
+        const dayMetrics = Boolean(
+            appState.day &&
+            appState.day.bedtime_start_at &&
+            appState.day.first_wake_at &&
+            Number.isFinite(totalSleepSeconds)
+        );
+
+        if (activeSession) {
+            sleepInfoContainer.classList.remove('hidden');
+            if (sleepDurationText) sleepDurationText.textContent = `Went to bed at ${formatTime(appState.sleepSession.start_at)}`;
+            updateActiveSleepDuration(appState.sleepSession.start_at);
+
+            if (!sleepInfoInterval) {
+                sleepInfoInterval = setInterval(() => {
+                    if (!(appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at)) {
+                        stopSleepInfoTicker();
+                        return;
+                    }
+                    updateActiveSleepDuration(appState.sleepSession.start_at);
+                }, 60000);
+            }
+            return;
+        }
+
+        stopSleepInfoTicker();
+
+        if (dayMetrics) {
+            sleepInfoContainer.classList.remove('hidden');
+            if (sleepDurationText) {
+                sleepDurationText.textContent = `Night sleep: ${formatDuration(totalSleepSeconds)}`;
+            }
+            if (wakeTimeText) {
+                wakeTimeText.textContent = `Fell asleep: ${formatTime(appState.day.bedtime_start_at)} • Wake time: ${formatTime(appState.day.first_wake_at)}`;
+            }
+        } else {
+            sleepInfoContainer.classList.add('hidden');
+        }
+    }
+
+    function calculateAwakeSeconds() {
+        if (!appState.day || !appState.day.first_wake_at) return null;
+        const wakeStartMs = new Date(appState.day.first_wake_at).getTime();
+        if (Number.isNaN(wakeStartMs)) return null;
+
+        const now = nowMs();
+        let awakeMs = now - wakeStartMs;
+        if (awakeMs <= 0) return 0;
+
+        const subtractWindow = (startIso, endIso) => {
+            const startMs = new Date(startIso).getTime();
+            let endMs = endIso ? new Date(endIso).getTime() : now;
+            if (Number.isNaN(startMs)) return;
+            if (Number.isNaN(endMs)) endMs = now;
+            const clampedStart = Math.max(startMs, wakeStartMs);
+            const clampedEnd = Math.min(endMs, now);
+            if (clampedEnd > clampedStart) {
+                awakeMs -= (clampedEnd - clampedStart);
+            }
+        };
+
+        appState.naps.forEach((nap) => {
+            if (!nap.actual_start_at) return;
+            if (nap.status === 'finished' && nap.actual_end_at) {
+                subtractWindow(nap.actual_start_at, nap.actual_end_at);
+            } else if (nap.status === 'in_progress') {
+                subtractWindow(nap.actual_start_at, null);
+            }
+        });
+
+        if (appState.sleepSession && appState.sleepSession.start_at && !appState.sleepSession.end_at) {
+            subtractWindow(appState.sleepSession.start_at, null);
+        }
+
+        return Math.max(0, Math.floor(awakeMs / 1000));
+    }
+    function calculateNapSeconds() {
+        if (!Array.isArray(appState.naps) || appState.naps.length === 0) return 0;
+        const now = nowMs();
+        let totalMs = 0;
+
+        appState.naps.forEach((nap) => {
+            if (!nap.actual_start_at) return;
+            const startMs = new Date(nap.actual_start_at).getTime();
+            if (Number.isNaN(startMs)) return;
+
+            let endMs;
+            if (nap.status === 'finished' && nap.actual_end_at) {
+                endMs = new Date(nap.actual_end_at).getTime();
+            } else if (nap.status === 'in_progress') {
+                endMs = now;
+            } else {
+                endMs = startMs;
+            }
+
+            if (Number.isNaN(endMs)) endMs = now;
+            const clampedEnd = Math.min(endMs, now);
+            if (clampedEnd > startMs) {
+                totalMs += clampedEnd - startMs;
+            }
+        });
+
+        return Math.max(0, Math.floor(totalMs / 1000));
+    }
+
+    function stopSummaryTicker() {
+        if (summaryTicker) {
+            clearInterval(summaryTicker);
+            summaryTicker = null;
+        }
+    }
+
+    function updateTodaySummary() {
+        if (!todaySummary) return;
+
+        const dayStarted = Boolean(appState.day && appState.day.first_wake_at);
+        const bedtimeOngoing = Boolean(appState.sleepSession && appState.sleepSession.start_at && !appState.sleepSession.end_at);
+
+        if (!dayStarted && !bedtimeOngoing) {
+            todaySummary.classList.add('hidden');
+            if (summaryDateText) summaryDateText.textContent = '';
+            stopSummaryTicker();
+            return;
+        }
+
+        todaySummary.classList.remove('hidden');
+
+        if (summaryDateText) {
+            const dateStr = appState.day?.date;
+            if (dateStr) {
+                const dateObj = new Date(`${dateStr}T00:00:00`);
+                summaryDateText.textContent = Number.isNaN(dateObj.getTime())
+                    ? ''
+                    : dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            } else {
+                summaryDateText.textContent = '';
+            }
+        }
+
+        const awakeSeconds = calculateAwakeSeconds();
+        const napSeconds = calculateNapSeconds();
+
+        if (awakeTotalText) {
+            const validAwake = Number.isFinite(awakeSeconds) && awakeSeconds !== null ? awakeSeconds : 0;
+            awakeTotalText.textContent = formatDuration(validAwake);
+        }
+
+        if (napTotalText) {
+            napTotalText.textContent = formatDuration(napSeconds);
+        }
+
+        const budgetSec = Number(appState.day?.daily_awake_budget_sec);
+        if (Number.isFinite(budgetSec) && budgetSec > 0) {
+            const usedRatio = Math.min(1, Math.max(0, (awakeSeconds || 0) / budgetSec));
+            const percentUsed = Math.round(usedRatio * 100);
+            if (awakeBudgetText) {
+                awakeBudgetText.textContent = `${percentUsed}% of ${formatDuration(budgetSec)} awake budget used`;
+            }
+            if (awakeProgressBar) {
+                awakeProgressBar.style.width = `${percentUsed}%`;
+            }
+        } else {
+            if (awakeBudgetText) {
+                awakeBudgetText.textContent = 'Awake budget unavailable';
+            }
+            if (awakeProgressBar) {
+                awakeProgressBar.style.width = '0%';
+            }
+        }
+
+        if (!summaryTicker) {
+            summaryTicker = setInterval(updateTodaySummary, 60000);
+        }
+    }
+
     // --- Initial Load ---
     fetchTodaySchedule();
 
@@ -506,6 +807,8 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log(`DEV: Clock offset is now ${clockOffsetMs / 60000} minutes.`);
             // Repaint anything time-based
             if (appState.currentNap) updateTimerDisplay();
+            updateSleepSummary();
+            updateTodaySummary();
         }
     });
 });
