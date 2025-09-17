@@ -645,7 +645,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 sleepDurationText.textContent = `Night sleep: ${formatDuration(totalSleepSeconds)}`;
             }
             if (wakeTimeText) {
-                wakeTimeText.textContent = `Down at ${formatTime(appState.day.bedtime_start_at)} • Woke at ${formatTime(appState.day.first_wake_at)}`;
+                wakeTimeText.textContent = `Fell asleep: ${formatTime(appState.day.bedtime_start_at)} • Wake time: ${formatTime(appState.day.first_wake_at)}`;
             }
         } else {
             sleepInfoContainer.classList.add('hidden');
