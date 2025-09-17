@@ -6,6 +6,8 @@ from flask import Flask, render_template, request, current_app
 # Import the configuration
 from .config import Config
 
+DEFAULT_AWAKE_BUDGET_SEC = 10 * 60 * 60
+
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""
     db_path = os.path.join(current_app.instance_path, current_app.config['DATABASE'])
@@ -43,6 +45,7 @@ def create_db(app):
     for ddl in (
         "ALTER TABLE days ADD COLUMN bedtime_start_at TEXT",
         "ALTER TABLE days ADD COLUMN total_night_sleep_sec INTEGER",
+        "ALTER TABLE days ADD COLUMN daily_awake_budget_sec INTEGER",
     ):
         try:
             c.execute(ddl)
@@ -269,13 +272,16 @@ def create_app(test_config=None):
                             current_app.logger.warning("Invalid timestamp encountered while closing sleep session.")
 
                     # Use "UPSERT" to either insert a new day or update the existing one
+                    awake_budget_sec = app.config.get('DEFAULT_AWAKE_BUDGET_SEC', DEFAULT_AWAKE_BUDGET_SEC)
+
                     conn.execute('''
-                        INSERT INTO days (date, first_wake_at, bedtime_start_at, total_night_sleep_sec)
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO days (date, first_wake_at, bedtime_start_at, total_night_sleep_sec, daily_awake_budget_sec)
+                        VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(date) DO UPDATE SET first_wake_at = excluded.first_wake_at,
                                                       bedtime_start_at = excluded.bedtime_start_at,
-                                                      total_night_sleep_sec = excluded.total_night_sleep_sec
-                    ''', (today_str, timestamp, bedtime_start_at, total_sleep_sec))
+                                                      total_night_sleep_sec = excluded.total_night_sleep_sec,
+                                                      daily_awake_budget_sec = COALESCE(days.daily_awake_budget_sec, excluded.daily_awake_budget_sec)
+                    ''', (today_str, timestamp, bedtime_start_at, total_sleep_sec, awake_budget_sec))
 
                     # Get the ID of the day we just created/updated
                     day_cursor = conn.execute('SELECT id FROM days WHERE date = ?', (today_str,))

@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let sleepInfoInterval = null;
     let isBedtimeActive = false;
     let setBedtimeUIState = () => {};
+    let summaryTicker = null;
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -51,6 +52,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const sleepInfoContainer = document.getElementById('sleep-summary');
     const sleepDurationText = document.getElementById('sleep-duration-text');
     const wakeTimeText = document.getElementById('wake-time-text');
+    const todaySummary = document.getElementById('today-summary');
+    const summaryDateText = document.getElementById('summary-date');
+    const awakeTotalText = document.getElementById('awake-total');
+    const napTotalText = document.getElementById('nap-total');
+    const awakeBudgetText = document.getElementById('awake-budget-text');
+    const awakeProgressBar = todaySummary ? todaySummary.querySelector('#awake-progress > div') : null;
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
     function ensureEditModal() {
@@ -158,6 +165,7 @@ document.addEventListener('DOMContentLoaded', function() {
           updateBedtimeUI(true);
           appState.sleepSession = { start_at: timestamp };
           updateSleepSummary();
+          updateTodaySummary();
 
           fetch('/api/day/bedtime', {
             method: 'POST',
@@ -173,6 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error(err);
             appState.sleepSession = previousSession;
             updateSleepSummary();
+            updateTodaySummary();
             updateBedtimeUI(false);
             fetchTodaySchedule();
           });
@@ -197,6 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
             appState.sleepSession = previousSession;
             updateBedtimeUI(true);
             updateSleepSummary();
+            updateTodaySummary();
           });
         }
       });
@@ -358,6 +368,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 napControlBtn.className = 'w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors opacity-50 cursor-not-allowed';
             }
             updateSleepSummary();
+            updateTodaySummary();
             return;
         }
         if (nextNapContainer) nextNapContainer.style.display = 'block';
@@ -422,6 +433,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         updateSleepSummary();
+        updateTodaySummary();
     }
 
     function setBabyStatus(isAsleep, eventTime) {
@@ -566,13 +578,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function formatDuration(totalSeconds) {
-        if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return 'N/A';
+        if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '--';
         const totalMinutes = Math.round(totalSeconds / 60);
         const hours = Math.floor(totalMinutes / 60);
         const minutes = totalMinutes % 60;
         const parts = [];
-        if (hours > 0) parts.push(`${hours} hr${hours !== 1 ? 's' : ''}`);
-        parts.push(`${minutes} min`);
+        if (hours > 0) parts.push(`${hours} h`);
+        if (minutes > 0 || parts.length === 0) parts.push(`${minutes} m`);
         return parts.join(' ');
     }
 
@@ -640,6 +652,141 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function calculateAwakeSeconds() {
+        if (!appState.day || !appState.day.first_wake_at) return null;
+        const wakeStartMs = new Date(appState.day.first_wake_at).getTime();
+        if (Number.isNaN(wakeStartMs)) return null;
+
+        const now = nowMs();
+        let awakeMs = now - wakeStartMs;
+        if (awakeMs <= 0) return 0;
+
+        const subtractWindow = (startIso, endIso) => {
+            const startMs = new Date(startIso).getTime();
+            let endMs = endIso ? new Date(endIso).getTime() : now;
+            if (Number.isNaN(startMs)) return;
+            if (Number.isNaN(endMs)) endMs = now;
+            const clampedStart = Math.max(startMs, wakeStartMs);
+            const clampedEnd = Math.min(endMs, now);
+            if (clampedEnd > clampedStart) {
+                awakeMs -= (clampedEnd - clampedStart);
+            }
+        };
+
+        appState.naps.forEach((nap) => {
+            if (!nap.actual_start_at) return;
+            if (nap.status === 'finished' && nap.actual_end_at) {
+                subtractWindow(nap.actual_start_at, nap.actual_end_at);
+            } else if (nap.status === 'in_progress') {
+                subtractWindow(nap.actual_start_at, null);
+            }
+        });
+
+        if (appState.sleepSession && appState.sleepSession.start_at && !appState.sleepSession.end_at) {
+            subtractWindow(appState.sleepSession.start_at, null);
+        }
+
+        return Math.max(0, Math.floor(awakeMs / 1000));
+    }
+    function calculateNapSeconds() {
+        if (!Array.isArray(appState.naps) || appState.naps.length === 0) return 0;
+        const now = nowMs();
+        let totalMs = 0;
+
+        appState.naps.forEach((nap) => {
+            if (!nap.actual_start_at) return;
+            const startMs = new Date(nap.actual_start_at).getTime();
+            if (Number.isNaN(startMs)) return;
+
+            let endMs;
+            if (nap.status === 'finished' && nap.actual_end_at) {
+                endMs = new Date(nap.actual_end_at).getTime();
+            } else if (nap.status === 'in_progress') {
+                endMs = now;
+            } else {
+                endMs = startMs;
+            }
+
+            if (Number.isNaN(endMs)) endMs = now;
+            const clampedEnd = Math.min(endMs, now);
+            if (clampedEnd > startMs) {
+                totalMs += clampedEnd - startMs;
+            }
+        });
+
+        return Math.max(0, Math.floor(totalMs / 1000));
+    }
+
+    function stopSummaryTicker() {
+        if (summaryTicker) {
+            clearInterval(summaryTicker);
+            summaryTicker = null;
+        }
+    }
+
+    function updateTodaySummary() {
+        if (!todaySummary) return;
+
+        const dayStarted = Boolean(appState.day && appState.day.first_wake_at);
+        const bedtimeOngoing = Boolean(appState.sleepSession && appState.sleepSession.start_at && !appState.sleepSession.end_at);
+
+        if (!dayStarted && !bedtimeOngoing) {
+            todaySummary.classList.add('hidden');
+            if (summaryDateText) summaryDateText.textContent = '';
+            stopSummaryTicker();
+            return;
+        }
+
+        todaySummary.classList.remove('hidden');
+
+        if (summaryDateText) {
+            const dateStr = appState.day?.date;
+            if (dateStr) {
+                const dateObj = new Date(`${dateStr}T00:00:00`);
+                summaryDateText.textContent = Number.isNaN(dateObj.getTime())
+                    ? ''
+                    : dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            } else {
+                summaryDateText.textContent = '';
+            }
+        }
+
+        const awakeSeconds = calculateAwakeSeconds();
+        const napSeconds = calculateNapSeconds();
+
+        if (awakeTotalText) {
+            const validAwake = Number.isFinite(awakeSeconds) && awakeSeconds !== null ? awakeSeconds : 0;
+            awakeTotalText.textContent = formatDuration(validAwake);
+        }
+
+        if (napTotalText) {
+            napTotalText.textContent = formatDuration(napSeconds);
+        }
+
+        const budgetSec = Number(appState.day?.daily_awake_budget_sec);
+        if (Number.isFinite(budgetSec) && budgetSec > 0) {
+            const usedRatio = Math.min(1, Math.max(0, (awakeSeconds || 0) / budgetSec));
+            const percentUsed = Math.round(usedRatio * 100);
+            if (awakeBudgetText) {
+                awakeBudgetText.textContent = `${percentUsed}% of ${formatDuration(budgetSec)} awake budget used`;
+            }
+            if (awakeProgressBar) {
+                awakeProgressBar.style.width = `${percentUsed}%`;
+            }
+        } else {
+            if (awakeBudgetText) {
+                awakeBudgetText.textContent = 'Awake budget unavailable';
+            }
+            if (awakeProgressBar) {
+                awakeProgressBar.style.width = '0%';
+            }
+        }
+
+        if (!summaryTicker) {
+            summaryTicker = setInterval(updateTodaySummary, 60000);
+        }
+    }
+
     // --- Initial Load ---
     fetchTodaySchedule();
 
@@ -661,6 +808,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Repaint anything time-based
             if (appState.currentNap) updateTimerDisplay();
             updateSleepSummary();
+            updateTodaySummary();
         }
     });
 });

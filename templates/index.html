@@ -51,6 +51,42 @@
       </div>
     </div>
 
+    <section id="today-summary" class="hidden">
+      <div class="mt-3 rounded-3xl bg-white shadow-lg p-4 space-y-4">
+        <div class="flex justify-between text-gray-600 text-xs uppercase tracking-wide">
+          <span>Today Summary</span>
+          <span id="summary-date"></span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div class="rounded-2xl bg-blue-50 p-4">
+            <p class="text-xs font-medium text-blue-700 flex items-center gap-2">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600">☀️</span>
+              Awake today
+            </p>
+            <p id="awake-total" class="mt-1 text-2xl font-semibold text-blue-900">--</p>
+          </div>
+          <div class="rounded-2xl bg-violet-50 p-4">
+            <p class="text-xs font-medium text-violet-700 flex items-center gap-2">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-violet-600">💤</span>
+              Total nap time
+            </p>
+            <p id="nap-total" class="mt-1 text-2xl font-semibold text-violet-900">--</p>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex justify-between text-xs text-gray-500">
+            <span>Awake budget</span>
+            <span id="awake-budget-text">--</span>
+          </div>
+          <div id="awake-progress" class="mt-2 h-3 rounded-full bg-gray-200">
+            <div class="h-full rounded-full bg-emerald-500" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Start/Stop Nap -->
     <button id="nap-control-btn"
       class="w-full bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:bg-green-600 transition-colors">
