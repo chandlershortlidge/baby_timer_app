@@ -30,6 +30,10 @@ document.addEventListener('DOMContentLoaded', function() {
         endReminderOverrideNapIndex: null,
         endReminderScheduledAt: null,
         endReminderAutoAdjusted: false,
+        upcomingAlarmScheduledAt: null,
+        upcomingAlarmOverrideMs: null,
+        upcomingAlarmOverrideNapIndex: null,
+        upcomingAlarmDismissedNapIndex: null,
     };
     let currentlyEditingNapIndex = null;
     let napTimerInterval = null;
@@ -45,6 +49,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let endReminderPreviouslyFocused = null;
     let endReminderModalContextNapIndex = null;
     let bedtimeRequestInFlight = false;
+    let alarmToastNode = null;
+    let alarmToastTimer = null;
+    let alarmToastRestoreFocus = null;
+    let alarmToastKeyHandler = null;
+    let alarmToastPulseManaged = false;
+    let alarmToastContext = null;
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -90,6 +100,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const endReminderSnoozeBtn = document.getElementById('end-reminder-snooze');
     const endReminderDismissBtn = document.getElementById('end-reminder-dismiss');
     const toastContainer = document.getElementById('toast-container');
+    const toastRoot = document.getElementById('toast-root');
     const ariaLiveRegion = document.getElementById('aria-live-region');
     const endReminderModal = document.getElementById('end-reminder-modal');
     const endReminderModalOptions = document.getElementById('end-reminder-options');
@@ -174,15 +185,18 @@ document.addEventListener('DOMContentLoaded', function() {
         endReminderModalOpen = true;
         endReminderModalContextNapIndex = appState.currentNap?.nap_index ?? null;
 
-        const napActive = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date);
-        const baseLead = napActive && Number.isFinite(appState.endReminderSecOverride)
+        const activeNapIndex = appState.currentNap?.nap_index ?? appState.endReminderOverrideNapIndex;
+        const napActive = Number.isInteger(activeNapIndex);
+        const hasOverrideForActiveNap = napActive && appState.endReminderOverrideNapIndex === activeNapIndex && Number.isFinite(appState.endReminderSecOverride);
+
+        const baseLead = hasOverrideForActiveNap
             ? appState.endReminderSecOverride
             : Number.isFinite(appState.globalEndReminderSec)
                 ? appState.globalEndReminderSec
                 : DEFAULT_END_REMINDER_LEAD_SEC;
 
         endReminderPickerSelectionSec = Number.isFinite(baseLead) ? baseLead : DEFAULT_END_REMINDER_LEAD_SEC;
-        endReminderPickerOneOff = napActive && appState.endReminderSecOverride != null;
+        endReminderPickerOneOff = hasOverrideForActiveNap;
 
         if (endReminderModalCheckbox) {
             endReminderModalCheckbox.checked = endReminderPickerOneOff;
@@ -219,7 +233,12 @@ document.addEventListener('DOMContentLoaded', function() {
         endReminderModalContextNapIndex = null;
 
         if (restoreFocus && endReminderPreviouslyFocused && typeof endReminderPreviouslyFocused.focus === 'function') {
-            window.setTimeout(() => endReminderPreviouslyFocused.focus(), 0);
+            const previouslyFocused = endReminderPreviouslyFocused;
+            window.setTimeout(() => {
+                if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+                    previouslyFocused.focus();
+                }
+            }, 0);
         }
         endReminderPreviouslyFocused = null;
 
@@ -340,6 +359,13 @@ document.addEventListener('DOMContentLoaded', function() {
             updateGlobalEndReminder(selectedSec)
                 .then((lead) => {
                     appState.globalEndReminderSec = lead;
+                    if (lead !== previousGlobal) {
+                        logEvent('nap_alarm_changed', {
+                            scope: 'global',
+                            old: Number.isFinite(previousGlobal) ? previousGlobal : null,
+                            new: Number.isFinite(lead) ? lead : null,
+                        });
+                    }
                     if (!Number.isFinite(lead) || lead <= 0) {
                         showToast('Reminder turned off for upcoming naps.', 'info');
                         announce('Reminder turned off for upcoming naps.');
@@ -362,8 +388,16 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (useOverride) {
+            const previousOverride = appState.endReminderSecOverride;
             appState.endReminderSecOverride = selectedSec;
             appState.endReminderOverrideNapIndex = appState.currentNap?.nap_index ?? null;
+            if (previousOverride !== selectedSec) {
+                logEvent('nap_alarm_changed', {
+                    scope: 'this_nap',
+                    old: Number.isFinite(previousOverride) ? previousOverride : null,
+                    new: Number.isFinite(selectedSec) ? selectedSec : null,
+                });
+            }
             closeEndReminderModal();
             scheduleNapReminder();
             renderReminderRow();
@@ -379,8 +413,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const needsUpdate = appState.globalEndReminderSec !== selectedSec;
         const previousGlobal = appState.globalEndReminderSec;
+        const previousOverride = appState.endReminderSecOverride;
         appState.endReminderSecOverride = null;
         appState.endReminderOverrideNapIndex = null;
+
+        if (previousOverride != null) {
+            logEvent('nap_alarm_changed', {
+                scope: 'this_nap',
+                old: Number.isFinite(previousOverride) ? previousOverride : null,
+                new: null,
+            });
+        }
 
         const finalize = () => {
             closeEndReminderModal();
@@ -399,6 +442,13 @@ document.addEventListener('DOMContentLoaded', function() {
             .then((lead) => {
                 appState.globalEndReminderSec = lead;
                 appState.alarmLeadTimeSec = lead;
+                if (lead !== previousGlobal) {
+                    logEvent('nap_alarm_changed', {
+                        scope: 'global',
+                        old: Number.isFinite(previousGlobal) ? previousGlobal : null,
+                        new: Number.isFinite(lead) ? lead : null,
+                    });
+                }
                 if (!Number.isFinite(lead) || lead <= 0) {
                     showToast('Reminder default turned off for naps.', 'info');
                     announce('Reminder default turned off.');
@@ -675,16 +725,30 @@ document.addEventListener('DOMContentLoaded', function() {
             lastEventEndTime = new Date(nowMs());
         }
 
+        const firstUpcomingNap = appState.naps.find((nap) => nap.status === 'upcoming') || null;
+        appState.nextNap = firstUpcomingNap;
+
+        if (!firstUpcomingNap) {
+            appState.upcomingAlarmDismissedNapIndex = null;
+            appState.upcomingAlarmOverrideMs = null;
+            appState.upcomingAlarmOverrideNapIndex = null;
+        } else {
+            if (appState.upcomingAlarmDismissedNapIndex != null && firstUpcomingNap.nap_index !== appState.upcomingAlarmDismissedNapIndex) {
+                appState.upcomingAlarmDismissedNapIndex = null;
+            }
+            if (appState.upcomingAlarmOverrideNapIndex != null && firstUpcomingNap.nap_index !== appState.upcomingAlarmOverrideNapIndex) {
+                appState.upcomingAlarmOverrideMs = null;
+                appState.upcomingAlarmOverrideNapIndex = null;
+            }
+        }
+
         let nextUpcomingNapTime = null;
         const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
 
-        const globalLeadForChip = Number.isFinite(appState.globalEndReminderSec)
-            ? appState.globalEndReminderSec
-            : DEFAULT_END_REMINDER_LEAD_SEC;
-
         appState.naps.forEach((nap, index) => {
             const li = document.createElement('li');
-            li.className = 'flex items-center justify-between p-4 bg-gray-50 rounded-xl';
+            li.className = 'flex items-center justify-between rounded-xl bg-gray-50 p-4';
+            li.setAttribute('data-nap-index', String(nap.nap_index));
             const durationSec = nap.adjusted_duration_sec || nap.planned_duration_sec;
             const durationMin = Math.round(durationSec / 60);
             const wakeWindowMs = (WAKE_WINDOWS_MIN[index] || WAKE_WINDOWS_MIN[WAKE_WINDOWS_MIN.length - 1]) * 60 * 1000;
@@ -695,15 +759,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 nextUpcomingNapTime = displayTime;
             }
 
-            const showAlarmChip = Boolean(
-                appState.nextNap &&
-                nap.nap_index === appState.nextNap.nap_index &&
-                Number.isFinite(globalLeadForChip) && globalLeadForChip > 0
-            );
-            const alarmChipHtml = showAlarmChip
-                ? `<span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">⏰ ${formatLeadChip(globalLeadForChip)}</span>`
-                : '';
-
             li.innerHTML = `
                 <div class="flex items-center space-x-4">
                     <div class="w-2 h-2 rounded-full ${nap.status === 'finished' ? 'bg-gray-400' : nap.status === 'in_progress' ? 'bg-blue-500' : 'bg-green-400'}"></div>
@@ -713,7 +768,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
-                    ${alarmChipHtml}
+                    <span class="container nap-chip hidden inline-flex w-auto flex-none items-center gap-1 rounded-full border border-gray-200 bg-white/70 px-2 py-0.5 text-xs font-medium leading-tight text-gray-600">⏰</span>
                     <button data-nap-index="${nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
                 </div>
             `;
@@ -751,6 +806,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         renderSleepSummary();
+        renderNapAlarmChip();
+    }
+
+    function renderNapAlarmChip() {
+        if (!scheduleList) return;
+
+        const chips = scheduleList.querySelectorAll('.nap-chip');
+        chips.forEach((chip) => {
+            chip.textContent = '⏰';
+            chip.classList.add('hidden');
+        });
+
+        const upcomingNap = appState.naps.find((nap) => nap.status === 'upcoming');
+        if (!upcomingNap) return;
+
+        if (appState.upcomingAlarmDismissedNapIndex != null && upcomingNap.nap_index === appState.upcomingAlarmDismissedNapIndex) {
+            return;
+        }
+
+        let effectiveLead = null;
+
+        if (
+            appState.upcomingAlarmOverrideNapIndex === upcomingNap.nap_index &&
+            Number.isFinite(appState.upcomingAlarmOverrideMs) &&
+            appState.nextNapPlannedStart instanceof Date &&
+            !Number.isNaN(appState.nextNapPlannedStart?.getTime())
+        ) {
+            effectiveLead = Math.max(0, Math.round((appState.nextNapPlannedStart.getTime() - appState.upcomingAlarmOverrideMs) / 1000));
+        }
+
+        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) {
+            if (appState.endReminderOverrideNapIndex != null && upcomingNap.nap_index === appState.endReminderOverrideNapIndex) {
+                const overrideLead = Number(appState.endReminderSecOverride);
+                if (Number.isFinite(overrideLead)) {
+                    effectiveLead = overrideLead;
+                }
+            }
+        }
+
+        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) {
+            const globalLead = Number(appState.globalEndReminderSec);
+            if (Number.isFinite(globalLead)) {
+                effectiveLead = globalLead;
+            }
+        }
+
+        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) return;
+
+        const targetItem = scheduleList.querySelector(`[data-nap-index="${upcomingNap.nap_index}"] .nap-chip`);
+        if (!targetItem) return;
+
+        const label = formatLeadChip(effectiveLead);
+        if (!label) return;
+
+        targetItem.textContent = `⏰ ${label}`;
+        targetItem.classList.remove('hidden');
     }
 
     function renderSleepSummary() {
@@ -1154,13 +1265,21 @@ document.addEventListener('DOMContentLoaded', function() {
             napReminderBtn.disabled = false;
             napReminderBtn.setAttribute('aria-disabled', 'false');
             napReminderText.textContent = formatDurationValue(leadSec);
-            showHelper('before next nap');
+            if (appState.upcomingAlarmDismissedNapIndex != null && appState.nextNap && appState.nextNap.nap_index === appState.upcomingAlarmDismissedNapIndex) {
+                showHelper('Dismissed for today');
+            } else if (appState.upcomingAlarmScheduledAt instanceof Date && !Number.isNaN(appState.upcomingAlarmScheduledAt?.getTime())) {
+                showHelper(`before next nap • fires at ${formatTime(appState.upcomingAlarmScheduledAt)}`);
+            } else {
+                showHelper('before next nap');
+            }
         } else {
             napReminderBtn.disabled = true;
             napReminderBtn.setAttribute('aria-disabled', 'true');
             napReminderText.textContent = formatDurationValue(leadSec);
             showHelper('No upcoming naps');
         }
+
+        renderNapAlarmChip();
     }
 
     function scheduleEndReminder() {
@@ -1211,6 +1330,13 @@ document.addEventListener('DOMContentLoaded', function() {
         appState.endReminderScheduledAt = new Date(desiredTarget);
         appState.endReminderAutoAdjusted = autoAdjusted;
 
+        const actualLeadSec = Math.max(0, Math.round((napEnd - desiredTarget) / 1000));
+        logEvent('nap_alarm_scheduled_at', {
+            context: 'end',
+            fireAt: new Date(desiredTarget).toISOString(),
+            leadTimeSec: actualLeadSec,
+        });
+
         endReminderTimeout = window.setTimeout(() => {
             endReminderTimeout = null;
             handleEndReminderFire();
@@ -1230,6 +1356,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (napTimerContainer) {
             napTimerContainer.classList.remove('animate-pulse');
         }
+        if (!keepActions && alarmToastContext === 'end') {
+            clearAlarmToast({ restoreFocus: false });
+        }
         if (!skipRender) {
             renderReminderRow();
         }
@@ -1237,6 +1366,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function handleEndReminderFire() {
         cancelEndReminder({ skipRender: true, keepActions: true });
+        const now = nowMs();
+        const napEnd = appState.currentNapProjectedEnd instanceof Date ? appState.currentNapProjectedEnd.getTime() : now;
+        const remainingSec = Math.max(0, Math.round((napEnd - now) / 1000));
+
         if (napTimerContainer) {
             napTimerContainer.classList.add('animate-pulse');
         }
@@ -1247,14 +1380,15 @@ document.addEventListener('DOMContentLoaded', function() {
             napReminderHelper.textContent = 'Reminder firing now.';
             napReminderHelper.classList.remove('hidden');
         }
-        showToast('End-of-nap reminder!', 'warning');
+
+        logEvent('nap_alarm_fired', { context: 'end', remainingSec });
+        showAlarmToast({ context: 'end', leadSec: remainingSec, fireAt: new Date(now) });
         announce('End-of-nap reminder firing now.');
     }
 
     function snoozeEndReminder() {
         if (!appState.currentNap || !(appState.currentNapProjectedEnd instanceof Date)) {
-            dismissEndReminder();
-            return;
+            return dismissEndReminder();
         }
 
         if (endReminderActions) endReminderActions.classList.add('hidden');
@@ -1263,8 +1397,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const napEnd = appState.currentNapProjectedEnd.getTime();
         const now = nowMs();
         if (!Number.isFinite(napEnd) || napEnd <= now) {
-            dismissEndReminder();
-            return;
+            return dismissEndReminder();
         }
 
         const snoozeMs = 2 * 60 * 1000;
@@ -1277,20 +1410,32 @@ document.addEventListener('DOMContentLoaded', function() {
 
         appState.endReminderScheduledAt = new Date(targetMs);
         appState.endReminderAutoAdjusted = true;
+        logEvent('nap_alarm_scheduled_at', {
+            context: 'end',
+            fireAt: new Date(targetMs).toISOString(),
+            leadTimeSec: Math.max(0, Math.round((napEnd - targetMs) / 1000)),
+        });
         endReminderTimeout = window.setTimeout(() => {
             endReminderTimeout = null;
             handleEndReminderFire();
         }, delay);
 
+        logEvent('nap_alarm_snoozed', { context: 'end', newFireAt: new Date(targetMs).toISOString() });
+
         renderReminderRow();
         showToast('Reminder snoozed for 2 minutes.', 'info');
         announce('End-of-nap reminder snoozed for two minutes.');
+        clearAlarmToast({ restoreFocus: false });
+        return true;
     }
 
     function dismissEndReminder() {
         cancelEndReminder();
+        logEvent('nap_alarm_dismissed', { context: 'end' });
         showToast('Reminder dismissed.', 'info');
         announce('End-of-nap reminder dismissed.');
+        clearAlarmToast({ restoreFocus: false });
+        return true;
     }
 
     function formatRelative(totalSeconds) {
@@ -1318,9 +1463,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function formatLeadChip(seconds) {
         if (!Number.isFinite(seconds) || seconds <= 0) return '';
-        if (seconds < 60) return `${seconds}s before`;
-        const minutes = seconds / 60;
-        return `${minutes} min before`;
+        if (seconds < 60) return `${seconds} s`;
+        const minutes = Math.max(1, Math.round(seconds / 60));
+        return minutes === 1 ? '1 min' : `${minutes} min`;
+    }
+
+    function formatLeadToast(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return '0 s';
+        if (seconds < 60) return `${Math.round(seconds)} s`;
+        const minutes = Math.max(1, Math.round(seconds / 60));
+        return minutes === 1 ? '1 min' : `${minutes} min`;
     }
 
     function formatDurationValue(seconds) {
@@ -1344,35 +1496,178 @@ document.addEventListener('DOMContentLoaded', function() {
             .join('|');
     }
 
-    function cancelAlarms() {
+    function cancelAlarms({ resetOverride = true } = {}) {
         if (upcomingNapAlarmTimeout) {
             clearTimeout(upcomingNapAlarmTimeout);
             upcomingNapAlarmTimeout = null;
         }
+
+        if (resetOverride) {
+            appState.upcomingAlarmScheduledAt = null;
+            appState.upcomingAlarmOverrideMs = null;
+            appState.upcomingAlarmOverrideNapIndex = null;
+        }
+
+        if (alarmToastContext === 'next') {
+            clearAlarmToast({ restoreFocus: false });
+        }
     }
 
     function scheduleUpcomingAlarm() {
-        cancelAlarms();
-
-        const leadSec = Number(appState.globalEndReminderSec);
-        if (!Number.isFinite(leadSec) || leadSec <= 0) return;
+        if (upcomingNapAlarmTimeout) {
+            clearTimeout(upcomingNapAlarmTimeout);
+            upcomingNapAlarmTimeout = null;
+        }
 
         const nextStart = appState.nextNapPlannedStart;
-        if (!(nextStart instanceof Date) || Number.isNaN(nextStart.getTime())) return;
-
-        const targetMs = nextStart.getTime() - leadSec * 1000;
-        const now = nowMs();
-
-        if (targetMs <= now) {
-            triggerAlarm(`Upcoming nap starts in ${formatLeadShort(leadSec)}.`);
+        if (!(nextStart instanceof Date) || Number.isNaN(nextStart.getTime())) {
+            appState.upcomingAlarmScheduledAt = null;
             return;
         }
+
+        const nextStartMs = nextStart.getTime();
+        if (!appState.nextNap) {
+            appState.upcomingAlarmScheduledAt = null;
+            return;
+        }
+
+        if (appState.upcomingAlarmDismissedNapIndex != null && appState.nextNap.nap_index === appState.upcomingAlarmDismissedNapIndex) {
+            appState.upcomingAlarmScheduledAt = null;
+            return;
+        }
+
+        const now = nowMs();
+        let targetMs = null;
+
+        if (
+            appState.upcomingAlarmOverrideNapIndex === appState.nextNap.nap_index &&
+            Number.isFinite(appState.upcomingAlarmOverrideMs)
+        ) {
+            targetMs = appState.upcomingAlarmOverrideMs;
+        } else {
+            const leadSec = Number(appState.globalEndReminderSec);
+            if (!Number.isFinite(leadSec) || leadSec <= 0) {
+                appState.upcomingAlarmScheduledAt = null;
+                return;
+            }
+            targetMs = nextStartMs - leadSec * 1000;
+            appState.upcomingAlarmOverrideMs = null;
+            appState.upcomingAlarmOverrideNapIndex = null;
+        }
+
+        if (!Number.isFinite(targetMs)) {
+            appState.upcomingAlarmScheduledAt = null;
+            return;
+        }
+
+        if (targetMs > nextStartMs) {
+            targetMs = nextStartMs;
+        }
+
+        if (targetMs <= now) {
+            appState.upcomingAlarmScheduledAt = null;
+            handleUpcomingAlarmFire({ scheduledMs: targetMs });
+            return;
+        }
+
+        appState.upcomingAlarmScheduledAt = new Date(targetMs);
+        const leadSec = Math.max(0, Math.round((nextStartMs - targetMs) / 1000));
+        logEvent('nap_alarm_scheduled_at', {
+            context: 'next',
+            fireAt: new Date(targetMs).toISOString(),
+            leadTimeSec: leadSec,
+        });
 
         const delay = targetMs - now;
         upcomingNapAlarmTimeout = window.setTimeout(() => {
             upcomingNapAlarmTimeout = null;
-            triggerAlarm(`Upcoming nap starts in ${formatLeadShort(leadSec)}.`);
+            appState.upcomingAlarmScheduledAt = null;
+            if (appState.upcomingAlarmOverrideNapIndex === appState.nextNap?.nap_index) {
+                appState.upcomingAlarmOverrideMs = null;
+                appState.upcomingAlarmOverrideNapIndex = null;
+            }
+            handleUpcomingAlarmFire({ scheduledMs: targetMs });
         }, delay);
+    }
+
+    function handleUpcomingAlarmFire({ scheduledMs } = {}) {
+        const now = nowMs();
+        const fireDate = new Date(now);
+        const nextStart = appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime())
+            ? appState.nextNapPlannedStart
+            : null;
+        const remainingSec = nextStart
+            ? Math.max(0, Math.round((nextStart.getTime() - now) / 1000))
+            : 0;
+
+        appState.upcomingAlarmScheduledAt = null;
+        if (appState.nextNap) {
+            appState.upcomingAlarmDismissedNapIndex = appState.nextNap.nap_index;
+        }
+
+        appState.upcomingAlarmOverrideMs = null;
+        appState.upcomingAlarmOverrideNapIndex = null;
+
+        if (napReminderHelper) {
+            napReminderHelper.textContent = 'Reminder firing now.';
+            napReminderHelper.classList.remove('hidden');
+        }
+
+        logEvent('nap_alarm_fired', { context: 'next', remainingSec, scheduledMs: Number.isFinite(scheduledMs) ? scheduledMs : null });
+        showAlarmToast({ context: 'next', leadSec: remainingSec, fireAt: fireDate });
+        announce('Upcoming nap reminder firing now.');
+    }
+
+    function snoozeUpcomingAlarm() {
+        if (!appState.nextNap || !(appState.nextNapPlannedStart instanceof Date) || Number.isNaN(appState.nextNapPlannedStart?.getTime())) {
+            return false;
+        }
+
+        const now = nowMs();
+        const napStartMs = appState.nextNapPlannedStart.getTime();
+        if (!Number.isFinite(napStartMs) || napStartMs <= now) {
+            return false;
+        }
+
+        const snoozeMs = 2 * 60 * 1000;
+        const targetMs = Math.min(napStartMs, now + snoozeMs);
+
+        appState.upcomingAlarmOverrideMs = targetMs;
+        appState.upcomingAlarmOverrideNapIndex = appState.nextNap.nap_index;
+        appState.upcomingAlarmDismissedNapIndex = null;
+
+        scheduleUpcomingAlarm();
+        renderReminderRow();
+
+        const scheduled = appState.upcomingAlarmScheduledAt instanceof Date && !Number.isNaN(appState.upcomingAlarmScheduledAt?.getTime());
+        const dismissedForNap = appState.nextNap && appState.upcomingAlarmDismissedNapIndex === appState.nextNap.nap_index;
+        if (!scheduled && !dismissedForNap) {
+            return false;
+        }
+
+        logEvent('nap_alarm_snoozed', { context: 'next', newFireAt: new Date(targetMs).toISOString() });
+        showToast('Reminder snoozed for 2 minutes.', 'info');
+        announce('Upcoming nap reminder snoozed for two minutes.');
+        clearAlarmToast({ restoreFocus: false });
+        return true;
+    }
+
+    function dismissUpcomingAlarm() {
+        if (!appState.nextNap) {
+            cancelAlarms();
+            renderReminderRow();
+            return false;
+        }
+
+        appState.upcomingAlarmDismissedNapIndex = appState.nextNap.nap_index;
+        cancelAlarms();
+        renderReminderRow();
+
+        logEvent('nap_alarm_dismissed', { context: 'next' });
+        showToast('Reminder dismissed.', 'info');
+        announce('Upcoming nap reminder dismissed.');
+        clearAlarmToast({ restoreFocus: false });
+        return true;
     }
 
     function scheduleNapReminder() {
@@ -1549,6 +1844,157 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function clearAlarmToast({ restoreFocus = true } = {}) {
+        if (alarmToastTimer) {
+            clearTimeout(alarmToastTimer);
+            alarmToastTimer = null;
+        }
+        if (alarmToastKeyHandler) {
+            document.removeEventListener('keydown', alarmToastKeyHandler, true);
+            alarmToastKeyHandler = null;
+        }
+        if (alarmToastNode) {
+            alarmToastNode.remove();
+            alarmToastNode = null;
+        }
+        if (alarmToastPulseManaged && napTimerContainer) {
+            napTimerContainer.classList.remove('animate-pulse');
+        }
+        alarmToastPulseManaged = false;
+        const focusTarget = alarmToastRestoreFocus;
+        alarmToastRestoreFocus = null;
+        alarmToastContext = null;
+
+        if (restoreFocus && focusTarget && typeof focusTarget.focus === 'function') {
+            window.setTimeout(() => {
+                if (document.contains(focusTarget)) {
+                    focusTarget.focus();
+                }
+            }, 0);
+        }
+    }
+
+    function showAlarmToast({ context, leadSec, fireAt }) {
+        if (!toastRoot) {
+            console.debug('Nap alarm:', context, leadSec, fireAt);
+            return;
+        }
+
+        const normalizedContext = context === 'end' ? 'end' : 'next';
+
+        clearAlarmToast({ restoreFocus: false });
+
+        const activeEl = document.activeElement;
+        alarmToastRestoreFocus = (activeEl && typeof activeEl.focus === 'function') ? activeEl : null;
+
+        const toast = document.createElement('div');
+        toast.className = 'nap-alarm-toast pointer-events-auto w-full max-w-md rounded-2xl bg-white p-4 shadow-lg ring-1 ring-gray-200';
+        toast.setAttribute('data-context', normalizedContext);
+
+        const heading = document.createElement('p');
+        heading.className = 'text-sm font-semibold text-gray-900';
+        heading.textContent = 'Nap alarm';
+
+        const subtitle = document.createElement('p');
+        subtitle.className = 'mt-1 text-xs text-gray-600';
+        const subtitleSuffix = normalizedContext === 'end' ? 'before end' : 'before next nap';
+        subtitle.textContent = `${formatLeadToast(leadSec)} ${subtitleSuffix}`;
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end';
+
+        const snoozeBtn = document.createElement('button');
+        snoozeBtn.type = 'button';
+        snoozeBtn.className = 'rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2';
+        snoozeBtn.textContent = 'Snooze 2 min';
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'rounded-xl bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2';
+        dismissBtn.textContent = 'Dismiss';
+
+        const handleAction = (action) => {
+            if (alarmToastTimer) {
+                clearTimeout(alarmToastTimer);
+                alarmToastTimer = null;
+            }
+
+            let success = false;
+            try {
+                if (action === 'snooze') {
+                    success = normalizedContext === 'end' ? snoozeEndReminder() : snoozeUpcomingAlarm();
+                } else if (action === 'dismiss') {
+                    success = normalizedContext === 'end' ? dismissEndReminder() : dismissUpcomingAlarm();
+                }
+            } catch (error) {
+                console.error('Failed to handle alarm toast action', error);
+                success = false;
+            }
+
+            if (!success) {
+                showToast("Couldn't update alarm. Try again.", 'error');
+                announce("Couldn't update alarm. Try again.");
+                alarmToastTimer = window.setTimeout(() => {
+                    clearAlarmToast();
+                }, 6000);
+                return;
+            }
+
+            clearAlarmToast();
+        };
+
+        snoozeBtn.addEventListener('click', () => handleAction('snooze'));
+        dismissBtn.addEventListener('click', () => handleAction('dismiss'));
+
+        actions.appendChild(snoozeBtn);
+        actions.appendChild(dismissBtn);
+
+        toast.appendChild(heading);
+        toast.appendChild(subtitle);
+        toast.appendChild(actions);
+
+        toastRoot.appendChild(toast);
+        alarmToastNode = toast;
+        alarmToastContext = normalizedContext;
+
+        if (napTimerContainer && normalizedContext === 'next') {
+            napTimerContainer.classList.add('animate-pulse');
+            alarmToastPulseManaged = true;
+        } else {
+            alarmToastPulseManaged = false;
+        }
+
+        alarmToastTimer = window.setTimeout(() => {
+            clearAlarmToast();
+        }, 6000);
+
+        alarmToastKeyHandler = (event) => {
+            if (!alarmToastNode) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                clearAlarmToast();
+                return;
+            }
+
+            if (event.key.toLowerCase?.() === 's') {
+                event.preventDefault();
+                handleAction('snooze');
+                return;
+            }
+
+            if (event.key.toLowerCase?.() === 'd') {
+                event.preventDefault();
+                handleAction('dismiss');
+            }
+        };
+
+        document.addEventListener('keydown', alarmToastKeyHandler, true);
+
+        window.setTimeout(() => {
+            snoozeBtn.focus();
+        }, 0);
+    }
+
     function showToast(message, type = 'info') {
         if (!toastContainer) {
             console.log(`[toast:${type}]`, message);
@@ -1585,9 +2031,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 50);
     }
 
-    function triggerAlarm(message) {
-        showToast(message, 'warning');
-        announce(message);
+    function logEvent(name, payload = {}) {
+        const timestamp = new Date(nowMs()).toISOString();
+        console.debug(`[event] ${timestamp} ${name}`, payload);
     }
 
     function stopSummaryTicker() {

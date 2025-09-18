@@ -154,6 +154,12 @@
   <!-- External JS (the single source of truth) -->
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 
+  <div
+    id="toast-root"
+    role="status"
+    aria-live="polite"
+    class="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4"
+  ></div>
   <div id="toast-container" class="pointer-events-none fixed inset-x-0 top-4 z-50 flex flex-col items-center space-y-2"></div>
   <div id="aria-live-region" class="sr-only" aria-live="polite"></div>
 
