@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', function() {
         upcomingAlarmOverrideMs: null,
         upcomingAlarmOverrideNapIndex: null,
         upcomingAlarmDismissedNapIndex: null,
+        soundEnabled: true,
     };
     let currentlyEditingNapIndex = null;
     let napTimerInterval = null;
@@ -55,6 +56,14 @@ document.addEventListener('DOMContentLoaded', function() {
     let alarmToastKeyHandler = null;
     let alarmToastPulseManaged = false;
     let alarmToastContext = null;
+    let alarmAudioUnlocked = false;
+    let alarmAudioUnlockPromise = null;
+    let alarmAudioUnlockFailed = false;
+    let alarmSoundStopTimer = null;
+    let lastNapActive = false;
+    let fallbackAudioCtx = null;
+    let fallbackGainNode = null;
+    let fallbackOscillator = null;
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -101,6 +110,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const endReminderDismissBtn = document.getElementById('end-reminder-dismiss');
     const toastContainer = document.getElementById('toast-container');
     const toastRoot = document.getElementById('toast-root');
+    const alarmAudio = document.getElementById('alarm-audio');
+    const napReminderSoundToggle = document.getElementById('nap-reminder-sound-toggle');
+    const napAudioHint = document.getElementById('nap-audio-hint');
     const ariaLiveRegion = document.getElementById('aria-live-region');
     const endReminderModal = document.getElementById('end-reminder-modal');
     const endReminderModalOptions = document.getElementById('end-reminder-options');
@@ -113,6 +125,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const bedtimeHelper = document.getElementById('bedtime-helper');
     const bedtimeBtnLabel = document.getElementById('bedtime-btn-label');
     const bedtimePressIndicator = document.getElementById('bedtime-press-indicator');
+
+    try {
+        const storedSoundEnabled = localStorage.getItem('napAlarmSoundEnabled');
+        if (storedSoundEnabled === 'false') {
+            appState.soundEnabled = false;
+        } else if (storedSoundEnabled === 'true') {
+            appState.soundEnabled = true;
+        } else if (storedSoundEnabled == null) {
+            localStorage.setItem('napAlarmSoundEnabled', appState.soundEnabled ? 'true' : 'false');
+        }
+    } catch (error) {
+        console.warn('Unable to read sound preference', error);
+    }
+    updateSoundToggleControl();
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
     function ensureEditModal() {
@@ -341,6 +367,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const napActive = Boolean(appState.currentNap);
         const useOverride = napActive && Boolean(endReminderPickerOneOff);
 
+        unlockAlarmAudioOnce();
+
         if (!napActive) {
             const previousGlobal = appState.globalEndReminderSec;
             const finalize = () => {
@@ -492,6 +520,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleOpen = (event) => {
             if (napReminderBtn.disabled) return;
             event.preventDefault();
+            unlockAlarmAudioOnce();
             openEndReminderModal();
         };
         napReminderBtn.addEventListener('click', handleOpen);
@@ -499,6 +528,29 @@ document.addEventListener('DOMContentLoaded', function() {
             if (event.key === 'Enter' || event.key === ' ') {
                 handleOpen(event);
             }
+        });
+    }
+
+    if (napReminderSoundToggle) {
+        napReminderSoundToggle.addEventListener('click', () => {
+            appState.soundEnabled = !appState.soundEnabled;
+            try {
+                localStorage.setItem('napAlarmSoundEnabled', appState.soundEnabled ? 'true' : 'false');
+            } catch (error) {
+                console.warn('Unable to persist sound toggle', error);
+            }
+            if (!appState.soundEnabled) {
+                stopAlarmSound();
+            } else {
+                unlockAlarmAudioOnce();
+            }
+            updateSoundToggleControl();
+        });
+    }
+
+    if (napAudioHint) {
+        napAudioHint.addEventListener('click', () => {
+            unlockAlarmAudioOnce();
         });
     }
 
@@ -647,9 +699,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const leadValue = Number(data.day?.nap_alarm_lead_sec);
             appState.alarmLeadTimeSec = Number.isFinite(leadValue) ? leadValue : DEFAULT_ALARM_LEAD_SEC;
             appState.naps = data.naps;
-            appState.currentNap = appState.naps.find(nap => nap.status === 'in_progress');
-            appState.nextNap = appState.naps.find(nap => nap.status === 'upcoming');
-            appState.scheduleSignature = computeScheduleSignature(appState.naps);
+        appState.currentNap = appState.naps.find(nap => nap.status === 'in_progress');
+        appState.nextNap = appState.naps.find(nap => nap.status === 'upcoming');
+        appState.scheduleSignature = computeScheduleSignature(appState.naps);
+
+        const napActiveNow = Boolean(appState.currentNap);
+        if (!napActiveNow && lastNapActive) {
+            stopAlarmSound();
+        }
+        lastNapActive = napActiveNow;
 
             renderSchedule();
 
@@ -667,6 +725,7 @@ document.addEventListener('DOMContentLoaded', function() {
             cancelAlarms();
             cancelEndReminder({ skipRender: true });
             renderSleepSummary();
+            renderReminderRow();
         }
     }
 
@@ -701,6 +760,7 @@ document.addEventListener('DOMContentLoaded', function() {
             appState.endReminderOverrideNapIndex = null;
             cancelEndReminder({ skipRender: true });
             cancelAlarms();
+            stopAlarmSound();
 
             if (napTimerInterval) {
                 clearInterval(napTimerInterval);
@@ -712,6 +772,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             scheduleSummary.textContent = bedtimeActive ? 'Night sleep in progress.' : 'Wake up time not logged yet.';
             renderSleepSummary();
+            lastNapActive = false;
             return;
         }
 
@@ -807,6 +868,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         renderSleepSummary();
         renderNapAlarmChip();
+        updateSoundToggleControl();
     }
 
     function renderNapAlarmChip() {
@@ -1008,6 +1070,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function startNap() {
         if (!appState.nextNap) return alert("No upcoming nap to start!");
         const napIndex = appState.nextNap.nap_index;
+        unlockAlarmAudioOnce();
         fetch('/api/naps/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1027,6 +1090,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function stopNap() {
         if (!appState.currentNap) return fetchTodaySchedule();
         const napIndex = appState.currentNap.nap_index;
+        stopAlarmSound();
         fetch('/api/naps/stop', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1359,6 +1423,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!keepActions && alarmToastContext === 'end') {
             clearAlarmToast({ restoreFocus: false });
         }
+        if (!keepActions) {
+            stopAlarmSound();
+        }
         if (!skipRender) {
             renderReminderRow();
         }
@@ -1383,6 +1450,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         logEvent('nap_alarm_fired', { context: 'end', remainingSec });
         showAlarmToast({ context: 'end', leadSec: remainingSec, fireAt: new Date(now) });
+        playAlarmSound();
         announce('End-of-nap reminder firing now.');
     }
 
@@ -1426,6 +1494,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Reminder snoozed for 2 minutes.', 'info');
         announce('End-of-nap reminder snoozed for two minutes.');
         clearAlarmToast({ restoreFocus: false });
+        stopAlarmSound();
         return true;
     }
 
@@ -1435,6 +1504,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Reminder dismissed.', 'info');
         announce('End-of-nap reminder dismissed.');
         clearAlarmToast({ restoreFocus: false });
+        stopAlarmSound();
         return true;
     }
 
@@ -1511,6 +1581,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (alarmToastContext === 'next') {
             clearAlarmToast({ restoreFocus: false });
         }
+
+        stopAlarmSound();
     }
 
     function scheduleUpcomingAlarm() {
@@ -1615,6 +1687,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         logEvent('nap_alarm_fired', { context: 'next', remainingSec, scheduledMs: Number.isFinite(scheduledMs) ? scheduledMs : null });
         showAlarmToast({ context: 'next', leadSec: remainingSec, fireAt: fireDate });
+        playAlarmSound();
         announce('Upcoming nap reminder firing now.');
     }
 
@@ -1649,6 +1722,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Reminder snoozed for 2 minutes.', 'info');
         announce('Upcoming nap reminder snoozed for two minutes.');
         clearAlarmToast({ restoreFocus: false });
+        stopAlarmSound();
         return true;
     }
 
@@ -1667,6 +1741,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Reminder dismissed.', 'info');
         announce('Upcoming nap reminder dismissed.');
         clearAlarmToast({ restoreFocus: false });
+        stopAlarmSound();
         return true;
     }
 
@@ -2036,6 +2111,171 @@ document.addEventListener('DOMContentLoaded', function() {
         console.debug(`[event] ${timestamp} ${name}`, payload);
     }
 
+    function ensureFallbackAudioContext() {
+        if (typeof window === 'undefined') return null;
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        if (!fallbackAudioCtx) {
+            fallbackAudioCtx = new Ctx();
+            fallbackGainNode = fallbackAudioCtx.createGain();
+            fallbackGainNode.gain.value = 0.18;
+            fallbackGainNode.connect(fallbackAudioCtx.destination);
+        }
+        return fallbackAudioCtx;
+    }
+
+    function startFallbackTone() {
+        const ctx = ensureFallbackAudioContext();
+        if (!ctx || !appState.soundEnabled) return;
+
+        if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+        }
+
+        if (fallbackOscillator) {
+            stopFallbackTone();
+        }
+
+        fallbackOscillator = ctx.createOscillator();
+        fallbackOscillator.type = 'sine';
+        fallbackOscillator.frequency.value = 880;
+        fallbackOscillator.connect(fallbackGainNode);
+        fallbackOscillator.start();
+
+        if (alarmSoundStopTimer) {
+            clearTimeout(alarmSoundStopTimer);
+        }
+        alarmSoundStopTimer = window.setTimeout(() => {
+            stopAlarmSound();
+        }, 10000);
+    }
+
+    function stopFallbackTone() {
+        if (fallbackOscillator) {
+            try {
+                fallbackOscillator.stop();
+            } catch (error) {
+                // Ignore stop errors if oscillator already stopped.
+            }
+            fallbackOscillator.disconnect();
+            fallbackOscillator = null;
+        }
+        if (fallbackAudioCtx && alarmSoundStopTimer) {
+            // timer cleared by stopAlarmSound.
+        }
+    }
+
+    function updateSoundToggleControl() {
+        if (!napReminderSoundToggle) return;
+
+        if (appState.scheduleError) {
+            napReminderSoundToggle.classList.add('hidden');
+        } else {
+            napReminderSoundToggle.classList.remove('hidden');
+        }
+
+        napReminderSoundToggle.textContent = appState.soundEnabled ? 'Sound on' : 'Sound off';
+
+        if (napAudioHint) {
+            if (alarmAudioUnlockFailed && appState.soundEnabled) {
+                napAudioHint.classList.remove('hidden');
+            } else {
+                napAudioHint.classList.add('hidden');
+            }
+        }
+    }
+
+    function unlockAlarmAudioOnce() {
+        if (!alarmAudio) return Promise.resolve(false);
+        if (alarmAudioUnlocked) return Promise.resolve(true);
+        if (alarmAudioUnlockPromise) return alarmAudioUnlockPromise;
+
+        alarmAudioUnlockFailed = false;
+
+        const ctx = ensureFallbackAudioContext();
+        if (ctx && ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+        }
+
+        const attempt = alarmAudio.play()
+            .then(() => {
+                alarmAudio.pause();
+                alarmAudio.currentTime = 0;
+                alarmAudioUnlocked = true;
+                alarmAudio.loop = false;
+                alarmAudioUnlockFailed = false;
+                if (napAudioHint) napAudioHint.classList.add('hidden');
+                updateSoundToggleControl();
+                return true;
+            })
+            .catch((error) => {
+                console.warn('Alarm audio unlock blocked', error);
+                alarmAudioUnlockFailed = true;
+                updateSoundToggleControl();
+                return false;
+            })
+            .finally(() => {
+                alarmAudioUnlockPromise = null;
+            });
+
+        alarmAudioUnlockPromise = attempt;
+        return attempt;
+    }
+
+    function stopAlarmSound() {
+        if (alarmSoundStopTimer) {
+            clearTimeout(alarmSoundStopTimer);
+            alarmSoundStopTimer = null;
+        }
+        if (alarmAudio) {
+            alarmAudio.loop = false;
+            alarmAudio.pause();
+            try {
+                alarmAudio.currentTime = 0;
+            } catch (error) {
+                // Some browsers restrict setting currentTime while detached; ignore.
+            }
+        }
+        stopFallbackTone();
+    }
+
+    function playAlarmSound() {
+        if (!alarmAudio || !appState.soundEnabled) return;
+
+        unlockAlarmAudioOnce().then((unlocked) => {
+            if (!unlocked || !appState.soundEnabled) {
+                startFallbackTone();
+                return;
+            }
+
+            if (alarmSoundStopTimer) {
+                clearTimeout(alarmSoundStopTimer);
+                alarmSoundStopTimer = null;
+            }
+
+            alarmAudio.loop = true;
+            try {
+                alarmAudio.currentTime = 0;
+            } catch (error) {
+                console.warn('Unable to reset alarm audio time', error);
+            }
+
+            const playPromise = alarmAudio.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch((error) => {
+                    console.warn('Alarm audio play blocked', error);
+                    alarmAudioUnlockFailed = true;
+                    updateSoundToggleControl();
+                    startFallbackTone();
+                });
+            }
+
+            alarmSoundStopTimer = window.setTimeout(() => {
+                stopAlarmSound();
+            }, 10000);
+        });
+    }
+
     function stopSummaryTicker() {
         if (summaryTicker) {
             clearInterval(summaryTicker);
@@ -2046,6 +2286,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateTodaySummary() {
         renderSleepSummary();
     }
+
+    window.addEventListener('pagehide', () => stopAlarmSound());
+    window.addEventListener('beforeunload', () => stopAlarmSound());
 
     // --- Initial Load ---
     renderSleepSummary();

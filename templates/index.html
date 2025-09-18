@@ -65,6 +65,16 @@
           <div>
             <span class="font-semibold">Nap alarm</span>
             <p id="nap-reminder-helper" class="mt-1 hidden text-xs text-gray-500"></p>
+            <button id="nap-reminder-sound-toggle"
+                    type="button"
+                    class="mt-1 hidden text-xs font-medium text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">
+              Sound on
+            </button>
+            <button id="nap-audio-hint"
+                    type="button"
+                    class="mt-1 hidden text-xs font-medium text-amber-600 underline decoration-dotted decoration-1 underline-offset-2">
+              Tap to enable sound
+            </button>
           </div>
           <button id="nap-reminder-btn"
                   type="button"
@@ -154,6 +164,11 @@
   <!-- External JS (the single source of truth) -->
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 
+  <audio id="alarm-audio" preload="auto" class="hidden">
+    <source src="{{ url_for('static', filename='audio/alarm.ogg') }}" type="audio/ogg">
+    <source src="{{ url_for('static', filename='audio/alarm.mp3') }}" type="audio/mpeg">
+    <source src="{{ url_for('static', filename='audio/alarm.wav') }}" type="audio/wav">
+  </audio>
   <div
     id="toast-root"
     role="status"
