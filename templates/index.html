@@ -61,24 +61,16 @@
       </div>
 
       <div class="space-y-4">
-        <div id="upcoming-alarm-row" class="flex items-center justify-between text-sm text-gray-700">
-          <span class="font-semibold">Upcoming nap alarm</span>
-          <button id="alarm-lead-btn"
-                  class="flex h-11 items-center gap-2 rounded-xl bg-white px-4 font-semibold text-indigo-600 shadow-sm ring-1 ring-indigo-200 transition disabled:cursor-not-allowed disabled:opacity-60"
-                  type="button">
-            <span id="alarm-lead-text">--</span>
-            <span aria-hidden="true">⌄</span>
-          </button>
-        </div>
-        <div id="end-reminder-row" class="hidden flex items-start justify-between text-sm text-gray-700">
+        <div id="nap-reminder-row" class="flex items-start justify-between text-sm text-gray-700">
           <div>
-            <p class="font-semibold">End-of-nap reminder</p>
-            <p id="end-reminder-helper" class="text-xs text-gray-500">Set after nap starts.</p>
+            <span class="font-semibold">Nap alarm</span>
+            <p id="nap-reminder-helper" class="mt-1 hidden text-xs text-gray-500"></p>
           </div>
-          <button id="end-reminder-btn"
+          <button id="nap-reminder-btn"
                   type="button"
-                  class="flex h-11 items-center gap-2 rounded-xl bg-indigo-600 px-4 font-semibold text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring disabled:cursor-not-allowed disabled:opacity-60">
-            <span id="end-reminder-text">Off</span>
+                  class="flex h-11 min-w-[150px] items-center justify-between rounded-xl bg-white px-4 font-semibold text-indigo-600 shadow-sm ring-1 ring-indigo-200 transition disabled:cursor-not-allowed disabled:opacity-60"
+                  style="font-variant-numeric: tabular-nums;">
+            <span id="nap-reminder-text">--</span>
             <span aria-hidden="true">⌄</span>
           </button>
         </div>

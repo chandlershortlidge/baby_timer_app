@@ -4,23 +4,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- State Management ---
     const DEFAULT_ALARM_LEAD_SEC = 20 * 60;
     const DEFAULT_END_REMINDER_LEAD_SEC = 20 * 60;
-    const ALARM_OPTIONS = [
-        { label: '30 seconds before', value: 30 },
-        { label: '1 minute before', value: 60 },
-        { label: '5 minutes before', value: 5 * 60 },
-        { label: '10 minutes before', value: 10 * 60 },
-        { label: '20 minutes before', value: 20 * 60 },
-        { label: '30 minutes before', value: 30 * 60 },
-        { label: 'Off', value: 0 },
-    ];
     const END_REMINDER_OPTIONS = [
         { label: 'Off', value: 0 },
-        { label: '30 seconds before end', value: 30 },
-        { label: '1 minute before end', value: 60 },
-        { label: '5 minutes before end', value: 5 * 60 },
-        { label: '10 minutes before end', value: 10 * 60 },
-        { label: '20 minutes before end', value: 20 * 60 },
-        { label: '30 minutes before end', value: 30 * 60 },
+        { label: '30 seconds', value: 30 },
+        { label: '1 minute', value: 60 },
+        { label: '5 minutes', value: 5 * 60 },
+        { label: '10 minutes', value: 10 * 60 },
+        { label: '20 minutes', value: 20 * 60 },
+        { label: '30 minutes', value: 30 * 60 },
     ];
 
     let appState = {
@@ -47,10 +38,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let setBedtimeUIState = () => {};
     let summaryTicker = null;
     let upcomingNapAlarmTimeout = null;
-    let alarmPickerOpen = false;
-    let alarmPickerSelectionSec = null;
-    let alarmPickerContextSignature = '';
-    let alarmPickerPreviouslyFocused = null;
     let endReminderTimeout = null;
     let endReminderModalOpen = false;
     let endReminderPickerSelectionSec = null;
@@ -95,12 +82,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
-    const alarmLeadBtn = document.getElementById('alarm-lead-btn');
-    const alarmLeadText = document.getElementById('alarm-lead-text');
-    const endReminderRow = document.getElementById('end-reminder-row');
-    const endReminderBtn = document.getElementById('end-reminder-btn');
-    const endReminderText = document.getElementById('end-reminder-text');
-    const endReminderHelper = document.getElementById('end-reminder-helper');
+    const napReminderRow = document.getElementById('nap-reminder-row');
+    const napReminderBtn = document.getElementById('nap-reminder-btn');
+    const napReminderText = document.getElementById('nap-reminder-text');
+    const napReminderHelper = document.getElementById('nap-reminder-helper');
     const endReminderActions = document.getElementById('end-reminder-actions');
     const endReminderSnoozeBtn = document.getElementById('end-reminder-snooze');
     const endReminderDismissBtn = document.getElementById('end-reminder-dismiss');
@@ -110,6 +95,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const endReminderModalOptions = document.getElementById('end-reminder-options');
     const endReminderModalOverlay = endReminderModal ? endReminderModal.querySelector('[data-end-reminder-overlay]') : null;
     const endReminderModalCheckbox = document.getElementById('end-reminder-oneoff');
+    const endReminderModalHelper = document.getElementById('end-reminder-modal-helper');
     const endReminderModalCancel = document.getElementById('end-reminder-cancel');
     const endReminderModalSave = document.getElementById('end-reminder-save');
     const bedtimeBtn = document.getElementById('bedtime-btn');
@@ -174,206 +160,10 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
-    function ensureAlarmModal() {
-        if (document.getElementById('alarm-picker-modal')) return;
-
-        const html = `
-        <div id="alarm-picker-modal"
-             class="fixed inset-0 z-50 hidden"
-             role="dialog"
-             aria-modal="true"
-             aria-labelledby="alarm-picker-title">
-          <div class="absolute inset-0 bg-black/50" data-alarm-overlay></div>
-          <div class="relative mx-auto mt-24 w-11/12 max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 id="alarm-picker-title" class="text-lg font-semibold text-gray-800">
-              Upcoming nap alarm
-            </h3>
-
-            <div id="alarm-picker-options"
-                 class="mt-4 space-y-2"
-                 role="radiogroup"
-                 aria-labelledby="alarm-picker-title">
-            </div>
-
-            <div class="mt-6 flex justify-end gap-3">
-              <button id="alarm-cancel-btn"
-                      class="rounded-xl bg-gray-100 px-4 py-2 text-gray-700 hover:bg-gray-200"
-                      type="button">
-                Cancel
-              </button>
-              <button id="alarm-save-btn"
-                      class="rounded-xl bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700"
-                      type="button">
-                Save
-              </button>
-            </div>
-          </div>
-        </div>`;
-
-        document.body.insertAdjacentHTML('beforeend', html);
-
-        const { modal, overlay, cancel, save } = getAlarmModalEls();
-        overlay.addEventListener('click', () => closeAlarmPicker());
-        cancel.addEventListener('click', () => closeAlarmPicker());
-        save.addEventListener('click', handleAlarmSave);
-        modal.addEventListener('keydown', trapAlarmPickerFocus);
-    }
-
-    function getAlarmModalEls() {
-        ensureAlarmModal();
-        return {
-            modal: document.getElementById('alarm-picker-modal'),
-            overlay: document.querySelector('#alarm-picker-modal [data-alarm-overlay]'),
-            options: document.getElementById('alarm-picker-options'),
-            cancel: document.getElementById('alarm-cancel-btn'),
-            save: document.getElementById('alarm-save-btn'),
-        };
-    }
-
-    function populateAlarmOptions(selectedValue) {
-        const { options } = getAlarmModalEls();
-        if (!options) return;
-
-        options.innerHTML = '';
-
-        ALARM_OPTIONS.forEach((option) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.dataset.value = String(option.value);
-            button.setAttribute('role', 'radio');
-            button.className = 'flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm';
-            button.innerHTML = `
-                <span>${option.label}</span>
-                <span class="text-indigo-600" aria-hidden="true">✓</span>
-            `;
-
-            button.addEventListener('click', () => setAlarmOptionSelection(option.value));
-            button.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    setAlarmOptionSelection(option.value);
-                }
-            });
-
-            options.appendChild(button);
-        });
-
-        setAlarmOptionSelection(selectedValue, { announceChange: false });
-    }
-
-    function setAlarmOptionSelection(value, { announceChange = true } = {}) {
-        const selected = Number.isFinite(value) ? value : DEFAULT_ALARM_LEAD_SEC;
-        alarmPickerSelectionSec = selected;
-
-        const { options } = getAlarmModalEls();
-        if (!options) return;
-
-        options.querySelectorAll('button[role="radio"]').forEach((btn) => {
-            const btnValue = Number(btn.dataset.value);
-            const isSelected = btnValue === selected;
-            btn.setAttribute('aria-checked', String(isSelected));
-            btn.classList.toggle('border-indigo-500', isSelected);
-            btn.classList.toggle('bg-indigo-50', isSelected);
-            btn.classList.toggle('text-indigo-700', isSelected);
-            btn.classList.toggle('border-gray-200', !isSelected);
-            btn.classList.toggle('bg-white', !isSelected);
-            btn.classList.toggle('text-gray-700', !isSelected);
-        });
-
-        if (announceChange && ariaLiveRegion) {
-            announce(`Alarm option ${formatLeadPlain(selected)} selected.`);
-        }
-    }
-
-    function openAlarmPicker() {
-        ensureAlarmModal();
-        const { modal, options, save } = getAlarmModalEls();
-        if (!modal || !options || !save) return;
-
-        alarmPickerPreviouslyFocused = document.activeElement;
-        alarmPickerOpen = true;
-        alarmPickerContextSignature = appState.scheduleSignature;
-
-        populateAlarmOptions(appState.alarmLeadTimeSec ?? DEFAULT_ALARM_LEAD_SEC);
-
-        modal.classList.remove('hidden');
-        document.body.dataset.scrollLock = 'true';
-        document.body.style.overflow = 'hidden';
-
-        const selectedButton = options.querySelector('button[aria-checked="true"]');
-        window.setTimeout(() => {
-            (selectedButton || save).focus();
-        }, 0);
-    }
-
-    function closeAlarmPicker({ restoreFocus = true, dueToScheduleChange = false } = {}) {
-        const { modal } = getAlarmModalEls();
-        if (!modal) return;
-
-        modal.classList.add('hidden');
-        document.body.style.overflow = '';
-        delete document.body.dataset.scrollLock;
-
-        alarmPickerOpen = false;
-        alarmPickerSelectionSec = null;
-        alarmPickerContextSignature = '';
-
-        if (restoreFocus && alarmPickerPreviouslyFocused && typeof alarmPickerPreviouslyFocused.focus === 'function') {
-            window.setTimeout(() => alarmPickerPreviouslyFocused.focus(), 0);
-        }
-        alarmPickerPreviouslyFocused = null;
-
-        if (dueToScheduleChange) {
-            showToast('Schedule changed; try again.', 'info');
-            announce('Schedule changed; try again.');
-        }
-    }
-
-    function trapAlarmPickerFocus(event) {
-        if (!alarmPickerOpen) return;
-
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            closeAlarmPicker();
-            return;
-        }
-
-        if (event.key !== 'Tab') return;
-
-        const { modal } = getAlarmModalEls();
-        if (!modal) return;
-
-        const focusable = Array.from(
-            modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
-        ).filter((el) => !el.hasAttribute('disabled'));
-
-        if (focusable.length === 0) return;
-
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        const isShift = event.shiftKey;
-        const active = document.activeElement;
-
-        if (!isShift && active === last) {
-            event.preventDefault();
-            first.focus();
-        } else if (isShift && active === first) {
-            event.preventDefault();
-            last.focus();
-        }
-    }
-
-    function handleAlarmSave() {
-        if (alarmPickerSelectionSec == null) {
-            alarmPickerSelectionSec = appState.alarmLeadTimeSec ?? DEFAULT_ALARM_LEAD_SEC;
-        }
-
-        persistAlarmLeadTime(alarmPickerSelectionSec);
-    }
 
     if (endReminderModalCheckbox) {
         endReminderModalCheckbox.addEventListener('change', () => {
-            endReminderPickerOneOff = Boolean(endReminderModalCheckbox.checked);
+            endReminderPickerOneOff = !endReminderModalCheckbox.disabled && Boolean(endReminderModalCheckbox.checked);
         });
     }
 
@@ -384,17 +174,25 @@ document.addEventListener('DOMContentLoaded', function() {
         endReminderModalOpen = true;
         endReminderModalContextNapIndex = appState.currentNap?.nap_index ?? null;
 
-        const baseLead = Number.isFinite(appState.endReminderSecOverride)
+        const napActive = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date);
+        const baseLead = napActive && Number.isFinite(appState.endReminderSecOverride)
             ? appState.endReminderSecOverride
             : Number.isFinite(appState.globalEndReminderSec)
                 ? appState.globalEndReminderSec
                 : DEFAULT_END_REMINDER_LEAD_SEC;
 
         endReminderPickerSelectionSec = Number.isFinite(baseLead) ? baseLead : DEFAULT_END_REMINDER_LEAD_SEC;
-        endReminderPickerOneOff = Boolean(appState.endReminderSecOverride != null);
+        endReminderPickerOneOff = napActive && appState.endReminderSecOverride != null;
 
         if (endReminderModalCheckbox) {
             endReminderModalCheckbox.checked = endReminderPickerOneOff;
+            endReminderModalCheckbox.disabled = !napActive;
+        }
+
+        if (endReminderModalHelper) {
+            endReminderModalHelper.textContent = napActive
+                ? 'Changes apply to this nap unless you turn off the toggle.'
+                : 'Changes update the default for upcoming naps.';
         }
 
         populateEndReminderOptions(endReminderPickerSelectionSec);
@@ -479,7 +277,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         if (announceChange) {
-            announce(`End-of-nap reminder set to ${formatLeadPlain(selected)} before end.`);
+            if (!Number.isFinite(selected) || selected <= 0) {
+                announce('Nap reminder turned off.');
+            } else {
+                const napActive = Boolean(appState.currentNap);
+                const context = napActive ? 'before the nap ends' : 'before the next nap';
+                announce(`Nap reminder set to ${formatLeadPlain(selected)} ${context}.`);
+            }
         }
     }
 
@@ -515,10 +319,45 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedSec = Number.isFinite(endReminderPickerSelectionSec)
             ? endReminderPickerSelectionSec
             : DEFAULT_END_REMINDER_LEAD_SEC;
-        const useOverride = Boolean(endReminderPickerOneOff);
+        const napActive = Boolean(appState.currentNap);
+        const useOverride = napActive && Boolean(endReminderPickerOneOff);
 
-        if (!appState.currentNap) {
-            closeEndReminderModal();
+        if (!napActive) {
+            const previousGlobal = appState.globalEndReminderSec;
+            const finalize = () => {
+                closeEndReminderModal();
+                scheduleNapReminder();
+                renderReminderRow();
+            };
+
+            if (selectedSec === previousGlobal) {
+                finalize();
+                return;
+            }
+
+            if (endReminderModalSave) endReminderModalSave.disabled = true;
+
+            updateGlobalEndReminder(selectedSec)
+                .then((lead) => {
+                    appState.globalEndReminderSec = lead;
+                    if (!Number.isFinite(lead) || lead <= 0) {
+                        showToast('Reminder turned off for upcoming naps.', 'info');
+                        announce('Reminder turned off for upcoming naps.');
+                    } else {
+                        showToast(`Reminder set to ${formatLeadPlain(lead)} before the next nap.`, 'success');
+                        announce('Reminder updated for upcoming naps.');
+                    }
+                })
+                .catch((error) => {
+                    console.error('Failed to update reminder', error);
+                    showToast("Couldn't save reminder. Try again.", 'error');
+                    announce("Couldn't save reminder. Try again.");
+                    appState.globalEndReminderSec = previousGlobal;
+                })
+                .finally(() => {
+                    if (endReminderModalSave) endReminderModalSave.disabled = false;
+                    finalize();
+                });
             return;
         }
 
@@ -526,10 +365,15 @@ document.addEventListener('DOMContentLoaded', function() {
             appState.endReminderSecOverride = selectedSec;
             appState.endReminderOverrideNapIndex = appState.currentNap?.nap_index ?? null;
             closeEndReminderModal();
-            scheduleEndReminder();
-            renderEndReminder();
-            showToast(`Reminder set to ${formatLeadPlain(selectedSec)} before this nap ends.`, 'success');
-            announce(`Reminder set for this nap.`);
+            scheduleNapReminder();
+            renderReminderRow();
+            if (!Number.isFinite(selectedSec) || selectedSec <= 0) {
+                showToast('Reminder turned off for this nap.', 'info');
+                announce('Reminder turned off for this nap.');
+            } else {
+                showToast(`Reminder set to ${formatLeadPlain(selectedSec)} before this nap ends.`, 'success');
+                announce('Reminder set for this nap.');
+            }
             return;
         }
 
@@ -540,8 +384,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const finalize = () => {
             closeEndReminderModal();
-            scheduleEndReminder();
-            renderEndReminder();
+            scheduleNapReminder();
+            renderReminderRow();
         };
 
         if (!needsUpdate) {
@@ -554,8 +398,14 @@ document.addEventListener('DOMContentLoaded', function() {
         updateGlobalEndReminder(selectedSec)
             .then((lead) => {
                 appState.globalEndReminderSec = lead;
-                showToast(`Reminder default set to ${formatLeadPlain(lead)} before nap ends.`, 'success');
-                announce(`Reminder default updated.`);
+                appState.alarmLeadTimeSec = lead;
+                if (!Number.isFinite(lead) || lead <= 0) {
+                    showToast('Reminder default turned off for naps.', 'info');
+                    announce('Reminder default turned off.');
+                } else {
+                    showToast(`Reminder default set to ${formatLeadPlain(lead)} before naps.`, 'success');
+                    announce(`Reminder default updated.`);
+                }
             })
             .catch((error) => {
                 console.error('Failed to update reminder', error);
@@ -588,29 +438,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (alarmLeadBtn) {
-        const openIfEnabled = (event) => {
-            if (alarmLeadBtn.disabled) return;
-            event.preventDefault();
-            openAlarmPicker();
-        };
-
-        alarmLeadBtn.addEventListener('click', openIfEnabled);
-        alarmLeadBtn.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                openIfEnabled(event);
-            }
-        });
-    }
-
-    if (endReminderBtn) {
+    if (napReminderBtn) {
         const handleOpen = (event) => {
-            if (endReminderBtn.disabled) return;
+            if (napReminderBtn.disabled) return;
             event.preventDefault();
             openEndReminderModal();
         };
-        endReminderBtn.addEventListener('click', handleOpen);
-        endReminderBtn.addEventListener('keydown', (event) => {
+        napReminderBtn.addEventListener('click', handleOpen);
+        napReminderBtn.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' || event.key === ' ') {
                 handleOpen(event);
             }
@@ -768,10 +603,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
             renderSchedule();
 
-            if (alarmPickerOpen && alarmPickerContextSignature && alarmPickerContextSignature !== appState.scheduleSignature) {
-                closeAlarmPicker({ dueToScheduleChange: true });
-            }
-
             if (endReminderModalOpen) {
                 const activeNapIndex = appState.currentNap?.nap_index ?? null;
                 if (endReminderModalContextNapIndex !== activeNapIndex) {
@@ -779,14 +610,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
-            scheduleUpcomingAlarm();
+            scheduleNapReminder();
         } catch (error) {
             console.error("Failed to fetch schedule:", error);
             appState.scheduleError = true;
             cancelAlarms();
-            if (alarmPickerOpen) {
-                closeAlarmPicker();
-            }
             cancelEndReminder({ skipRender: true });
             renderSleepSummary();
         }
@@ -804,7 +632,8 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Failed to fetch end reminder setting:', error);
             appState.globalEndReminderSec = DEFAULT_END_REMINDER_LEAD_SEC;
         } finally {
-            renderSleepSummary();
+            appState.alarmLeadTimeSec = appState.globalEndReminderSec;
+            scheduleNapReminder();
         }
     }
 
@@ -849,6 +678,10 @@ document.addEventListener('DOMContentLoaded', function() {
         let nextUpcomingNapTime = null;
         const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
 
+        const globalLeadForChip = Number.isFinite(appState.globalEndReminderSec)
+            ? appState.globalEndReminderSec
+            : DEFAULT_END_REMINDER_LEAD_SEC;
+
         appState.naps.forEach((nap, index) => {
             const li = document.createElement('li');
             li.className = 'flex items-center justify-between p-4 bg-gray-50 rounded-xl';
@@ -865,10 +698,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const showAlarmChip = Boolean(
                 appState.nextNap &&
                 nap.nap_index === appState.nextNap.nap_index &&
-                (appState.alarmLeadTimeSec ?? 0) > 0
+                Number.isFinite(globalLeadForChip) && globalLeadForChip > 0
             );
             const alarmChipHtml = showAlarmChip
-                ? `<span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">⏰ ${formatLeadChip(appState.alarmLeadTimeSec)}</span>`
+                ? `<span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">⏰ ${formatLeadChip(globalLeadForChip)}</span>`
                 : '';
 
             li.innerHTML = `
@@ -917,7 +750,6 @@ document.addEventListener('DOMContentLoaded', function() {
             napTimerContainer.classList.add('hidden');
         }
 
-        scheduleEndReminder();
         renderSleepSummary();
     }
 
@@ -1010,11 +842,15 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (bedtimeBtn) {
-            bedtimeBtn.disabled = Boolean(appState.currentNap);
+            const disabledBecauseNap = Boolean(appState.currentNap);
+            const disabled = disabledBecauseNap || bedtimeRequestInFlight;
+            bedtimeBtn.disabled = disabled;
             if (bedtimePressIndicator) bedtimePressIndicator.style.opacity = '0';
 
             if (bedtimeHelper) {
-                if (appState.currentNap) {
+                if (bedtimeRequestInFlight) {
+                    bedtimeHelper.textContent = 'Saving…';
+                } else if (disabledBecauseNap) {
                     bedtimeHelper.textContent = 'End nap first.';
                 } else if (isBedtimeActive) {
                     bedtimeHelper.textContent = 'Long-press to log wake-up.';
@@ -1026,55 +862,36 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        renderAlarmRows();
-
         if (!dayStarted && !bedtimeActive) {
             stopSummaryTicker();
         } else if (!summaryTicker) {
             summaryTicker = setInterval(updateTodaySummary, 60000);
         }
+
+        scheduleNapReminder();
     }
+
+    setBedtimeUIState = (active) => {
+        isBedtimeActive = active;
+        if (!bedtimeBtn) return;
+
+        bedtimeBtn.classList.remove(
+            'bg-purple-600', 'hover:bg-purple-700',
+            'bg-purple-700', 'hover:bg-purple-800',
+            'bg-amber-500', 'hover:bg-amber-600'
+        );
+        if (active) {
+            bedtimeBtn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+            if (bedtimeBtnLabel) bedtimeBtnLabel.textContent = 'End Bedtime';
+        } else {
+            bedtimeBtn.classList.add('bg-purple-600', 'hover:bg-purple-700');
+            if (bedtimeBtnLabel) bedtimeBtnLabel.textContent = 'Start Bedtime';
+        }
+    };
 
 
     function updateTodaySummary() {
         renderSleepSummary();
-    }
-
-    function renderAlarmRows() {
-        if (!alarmLeadBtn || !alarmLeadText) return;
-
-        const dayStarted = Boolean(appState.day && appState.day.first_wake_at);
-        const napActive = Boolean(appState.currentNap);
-        const hasUpcoming = Boolean(appState.nextNap);
-        const leadSec = Number.isFinite(appState.alarmLeadTimeSec) ? appState.alarmLeadTimeSec : DEFAULT_ALARM_LEAD_SEC;
-
-        if (appState.scheduleError) {
-            alarmLeadBtn.disabled = true;
-            alarmLeadBtn.setAttribute('aria-disabled', 'true');
-            alarmLeadText.textContent = 'Settings unavailable';
-            renderEndReminder();
-            return;
-        }
-
-        let disabled = false;
-        let label;
-
-        if (!dayStarted) {
-            disabled = true;
-            label = leadSec > 0 ? formatLeadRowText(leadSec, 'nap') : 'Alarm off';
-        } else if (!hasUpcoming && !napActive) {
-            disabled = true;
-            label = 'No upcoming naps';
-        } else {
-            disabled = false;
-            label = leadSec > 0 ? formatLeadRowText(leadSec, napActive ? 'current' : 'nap') : 'Alarm off';
-        }
-
-        alarmLeadBtn.disabled = disabled;
-        alarmLeadBtn.setAttribute('aria-disabled', String(disabled));
-        alarmLeadText.textContent = label;
-
-        renderEndReminder();
     }
 
     function startNap() {
@@ -1276,60 +1093,73 @@ document.addEventListener('DOMContentLoaded', function() {
         return Math.max(0, Math.floor(totalMs / 1000));
     }
 
-    function renderEndReminder() {
-        if (!endReminderBtn || !endReminderText || !endReminderHelper || !endReminderRow) return;
+    function renderReminderRow() {
+        if (!napReminderBtn || !napReminderText || !napReminderRow) return;
 
-        const hasActiveNap = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime()));
-        const overrideLead = Number(appState.endReminderSecOverride);
+        napReminderRow.classList.remove('hidden');
+
+        const napActive = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime()));
+        const hasUpcoming = Boolean(appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime()));
+        const scheduleError = appState.scheduleError;
+
         const globalLead = Number(appState.globalEndReminderSec);
-        const leadSec = Number.isFinite(overrideLead)
+        const overrideLead = Number(appState.endReminderSecOverride);
+        const leadSec = napActive && Number.isFinite(overrideLead)
             ? overrideLead
-            : Number.isFinite(globalLead) ? globalLead : DEFAULT_END_REMINDER_LEAD_SEC;
+            : Number.isFinite(globalLead)
+                ? globalLead
+                : DEFAULT_END_REMINDER_LEAD_SEC;
 
-        if (!hasActiveNap) {
-            endReminderRow.classList.add('hidden');
-            endReminderBtn.disabled = true;
-            endReminderBtn.setAttribute('aria-disabled', 'true');
-            endReminderText.textContent = 'Off';
-            endReminderHelper.textContent = 'Set after nap starts.';
-            if (endReminderActions) endReminderActions.classList.add('hidden');
-            if (napTimerContainer) napTimerContainer.classList.remove('animate-pulse');
-            return;
-        }
-
-        endReminderRow.classList.remove('hidden');
-
-        endReminderBtn.disabled = false;
-        endReminderBtn.setAttribute('aria-disabled', 'false');
-        endReminderText.textContent = formatEndReminderButtonLabel(leadSec);
-
-        const scheduled = appState.endReminderScheduledAt instanceof Date && !Number.isNaN(appState.endReminderScheduledAt?.getTime())
-            ? appState.endReminderScheduledAt
-            : null;
-
-        if (!Number.isFinite(leadSec) || leadSec <= 0) {
-            endReminderHelper.textContent = 'Reminder off.';
-            if (endReminderActions) endReminderActions.classList.add('hidden');
-            if (napTimerContainer) napTimerContainer.classList.remove('animate-pulse');
-            return;
-        }
-
-        if (scheduled) {
-            const now = nowMs();
-            const diffMs = scheduled.getTime() - now;
-            if (diffMs <= 0) {
-                if (appState.endReminderAutoAdjusted) {
-                    endReminderHelper.textContent = 'Will fire in 0 sec (auto-adjusted)';
-                } else {
-                    endReminderHelper.textContent = 'Reminder firing now.';
-                }
-            } else if (appState.endReminderAutoAdjusted) {
-                endReminderHelper.textContent = `Will fire in ${formatRelative(Math.ceil(diffMs / 1000))} (auto-adjusted)`;
+        const showHelper = (text) => {
+            if (!napReminderHelper) return;
+            if (text) {
+                napReminderHelper.textContent = text;
+                napReminderHelper.classList.remove('hidden');
             } else {
-                endReminderHelper.textContent = `Fires at ${formatTime(scheduled)}`;
+                napReminderHelper.textContent = '';
+                napReminderHelper.classList.add('hidden');
             }
+        };
+
+        if (scheduleError) {
+            napReminderBtn.disabled = true;
+            napReminderBtn.setAttribute('aria-disabled', 'true');
+            napReminderText.textContent = formatDurationValue(leadSec);
+            showHelper('Settings unavailable');
+            return;
+        }
+
+        if (napActive) {
+            napReminderBtn.disabled = false;
+            napReminderBtn.setAttribute('aria-disabled', 'false');
+            napReminderText.textContent = formatDurationValue(leadSec);
+
+            if (leadSec > 0) {
+                let scheduled = appState.endReminderScheduledAt instanceof Date && !Number.isNaN(appState.endReminderScheduledAt?.getTime())
+                    ? appState.endReminderScheduledAt
+                    : null;
+
+                if (!scheduled && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime())) {
+                    scheduled = new Date(appState.currentNapProjectedEnd.getTime() - leadSec * 1000);
+                }
+
+                showHelper(scheduled ? `before nap ends • fires at ${formatTime(scheduled)}` : 'before nap ends');
+            } else {
+                napReminderHelper.classList.add('hidden');
+            }
+            return;
+        }
+
+        if (hasUpcoming) {
+            napReminderBtn.disabled = false;
+            napReminderBtn.setAttribute('aria-disabled', 'false');
+            napReminderText.textContent = formatDurationValue(leadSec);
+            showHelper('before next nap');
         } else {
-            endReminderHelper.textContent = 'Reminder off.';
+            napReminderBtn.disabled = true;
+            napReminderBtn.setAttribute('aria-disabled', 'true');
+            napReminderText.textContent = formatDurationValue(leadSec);
+            showHelper('No upcoming naps');
         }
     }
 
@@ -1401,7 +1231,7 @@ document.addEventListener('DOMContentLoaded', function() {
             napTimerContainer.classList.remove('animate-pulse');
         }
         if (!skipRender) {
-            renderEndReminder();
+            renderReminderRow();
         }
     }
 
@@ -1413,8 +1243,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (endReminderActions) {
             endReminderActions.classList.remove('hidden');
         }
-        if (endReminderHelper) {
-            endReminderHelper.textContent = 'Reminder firing now.';
+        if (napReminderHelper) {
+            napReminderHelper.textContent = 'Reminder firing now.';
+            napReminderHelper.classList.remove('hidden');
         }
         showToast('End-of-nap reminder!', 'warning');
         announce('End-of-nap reminder firing now.');
@@ -1451,7 +1282,7 @@ document.addEventListener('DOMContentLoaded', function() {
             handleEndReminderFire();
         }, delay);
 
-        renderEndReminder();
+        renderReminderRow();
         showToast('Reminder snoozed for 2 minutes.', 'info');
         announce('End-of-nap reminder snoozed for two minutes.');
     }
@@ -1460,11 +1291,6 @@ document.addEventListener('DOMContentLoaded', function() {
         cancelEndReminder();
         showToast('Reminder dismissed.', 'info');
         announce('End-of-nap reminder dismissed.');
-    }
-
-    function formatEndReminderButtonLabel(seconds) {
-        if (!Number.isFinite(seconds) || seconds <= 0) return 'Off';
-        return `${formatLeadShort(seconds)} before end`;
     }
 
     function formatRelative(totalSeconds) {
@@ -1490,19 +1316,18 @@ document.addEventListener('DOMContentLoaded', function() {
         return minutes === 1 ? '1 minute' : `${minutes} minutes`;
     }
 
-    function formatLeadRowText(seconds, context = 'nap') {
-        if (!Number.isFinite(seconds) || seconds <= 0) return 'Alarm off';
-        const base = formatLeadShort(seconds);
-        return context === 'current'
-            ? `${base} before this nap ends`
-            : `${base} before nap`;
-    }
-
     function formatLeadChip(seconds) {
         if (!Number.isFinite(seconds) || seconds <= 0) return '';
         if (seconds < 60) return `${seconds}s before`;
         const minutes = seconds / 60;
-        return `${minutes}m before`;
+        return `${minutes} min before`;
+    }
+
+    function formatDurationValue(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return 'Off';
+        if (seconds < 60) return `${seconds} s`;
+        const minutes = seconds / 60;
+        return minutes === 1 ? '1 min' : `${minutes} min`;
     }
 
     function computeScheduleSignature(naps) {
@@ -1529,7 +1354,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function scheduleUpcomingAlarm() {
         cancelAlarms();
 
-        const leadSec = Number(appState.alarmLeadTimeSec);
+        const leadSec = Number(appState.globalEndReminderSec);
         if (!Number.isFinite(leadSec) || leadSec <= 0) return;
 
         const nextStart = appState.nextNapPlannedStart;
@@ -1548,6 +1373,24 @@ document.addEventListener('DOMContentLoaded', function() {
             upcomingNapAlarmTimeout = null;
             triggerAlarm(`Upcoming nap starts in ${formatLeadShort(leadSec)}.`);
         }, delay);
+    }
+
+    function scheduleNapReminder() {
+        const napActive = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime()));
+
+        if (napActive) {
+            scheduleEndReminder();
+        } else {
+            cancelEndReminder({ skipRender: true });
+
+            if (appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime())) {
+                scheduleUpcomingAlarm();
+            } else {
+                cancelAlarms();
+            }
+        }
+
+        renderReminderRow();
     }
 
     function attachBedtimeLongPress() {
@@ -1689,68 +1532,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-
-    function persistAlarmLeadTime(newLeadSec) {
-        const previousLead = appState.alarmLeadTimeSec ?? DEFAULT_ALARM_LEAD_SEC;
-        const targetDate = appState.day?.date;
-
-        if (!targetDate) {
-            closeAlarmPicker();
-            return;
-        }
-
-        const normalizedLead = Number(newLeadSec);
-        if (Number.isFinite(normalizedLead)) {
-            newLeadSec = normalizedLead;
-        } else {
-            newLeadSec = previousLead;
-        }
-
-        if (newLeadSec === previousLead) {
-            closeAlarmPicker();
-            return;
-        }
-
-        fetch('/api/day/alarm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                lead_time_sec: newLeadSec,
-                date: targetDate,
-            }),
-        })
-        .then(async (res) => {
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok || payload.status !== 'success') {
-                const errorMessage = payload.message || "Couldn't save alarm. Try again.";
-                throw new Error(errorMessage);
-            }
-            return payload;
-        })
-        .then((payload) => {
-            const appliedLead = Number(payload.lead_time_sec ?? newLeadSec);
-            appState.alarmLeadTimeSec = Number.isFinite(appliedLead) ? appliedLead : previousLead;
-            closeAlarmPicker();
-            renderSchedule();
-            scheduleUpcomingAlarm();
-            const context = appState.currentNap ? 'this nap ends' : 'the next nap';
-            if (appState.alarmLeadTimeSec > 0) {
-                const plain = formatLeadPlain(appState.alarmLeadTimeSec);
-                showToast(`Alarm set to ${plain} before ${context}.`, 'success');
-                announce(`Alarm updated to ${plain} before ${context}.`);
-            } else {
-                showToast('Alarm turned off.', 'info');
-                announce('Alarm turned off.');
-            }
-        })
-        .catch((error) => {
-            console.error('Failed to save alarm', error);
-            appState.alarmLeadTimeSec = previousLead;
-            setAlarmOptionSelection(previousLead, { announceChange: false });
-            showToast("Couldn't save alarm. Try again.", 'error');
-            announce("Couldn't save alarm. Try again.");
-        });
-    }
 
     function updateGlobalEndReminder(newLeadSec) {
         return fetch('/api/settings/reminder', {
