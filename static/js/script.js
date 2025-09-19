@@ -77,6 +77,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const DEFAULT_NEW_NAP_DURATION_MIN = 45;
     const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
     const AVAILABLE_SOUNDS = ['chirp', 'marimba', 'bell'];
+    const TOAST_AUTOHIDE_MS = 20000;
 
     function parseISODate(value) {
         if (!value) return null;
@@ -2841,6 +2842,35 @@ document.addEventListener('DOMContentLoaded', function() {
         toastRoot.appendChild(toast);
         alarmToastNode = toast;
         alarmToastContext = normalizedContext;
+        const toastCreatedAt = nowMs();
+        const computeRemaining = () => {
+            if (!alarmToastNode) return 0;
+            const elapsed = nowMs() - toastCreatedAt;
+            return Math.max(0, TOAST_AUTOHIDE_MS - elapsed);
+        };
+
+        let resumeTimeout = () => {
+            const remaining = computeRemaining();
+            if (remaining <= 0) {
+                clearAlarmToast();
+                return;
+            }
+            alarmToastTimer = window.setTimeout(() => {
+                clearAlarmToast();
+            }, remaining);
+        };
+
+        const pauseTimeout = () => {
+            if (alarmToastTimer) {
+                clearTimeout(alarmToastTimer);
+                alarmToastTimer = null;
+            }
+        };
+
+        toast.addEventListener('mouseenter', pauseTimeout);
+        toast.addEventListener('mouseleave', resumeTimeout);
+        toast.addEventListener('focusin', pauseTimeout);
+        toast.addEventListener('focusout', resumeTimeout);
 
         if (napTimerContainer && normalizedContext === 'next') {
             napTimerContainer.classList.add('animate-pulse');
@@ -2849,9 +2879,7 @@ document.addEventListener('DOMContentLoaded', function() {
             alarmToastPulseManaged = false;
         }
 
-        alarmToastTimer = window.setTimeout(() => {
-            clearAlarmToast();
-        }, 6000);
+        resumeTimeout();
 
         alarmToastKeyHandler = (event) => {
             if (!alarmToastNode) return;
