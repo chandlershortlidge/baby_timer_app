@@ -220,10 +220,13 @@
   <!-- External JS (the single source of truth) -->
   <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 
-  <audio id="alarm-audio" preload="auto" class="hidden">
-    <source src="{{ url_for('static', filename='audio/alarm.ogg') }}" type="audio/ogg">
-    <source src="{{ url_for('static', filename='audio/alarm.mp3') }}" type="audio/mpeg">
-    <source src="{{ url_for('static', filename='audio/alarm.wav') }}" type="audio/wav">
+  <audio id="alarm-audio" preload="auto" class="hidden"
+         data-sound-chirp="{{ url_for('static', filename='audio/chirp.wav') }}"
+         data-sound-marimba="{{ url_for('static', filename='audio/marimba.wav') }}"
+         data-sound-bell="{{ url_for('static', filename='audio/bell.wav') }}">
+    <source src="{{ url_for('static', filename='audio/chirp.ogg') }}" type="audio/ogg">
+    <source src="{{ url_for('static', filename='audio/chirp.mp3') }}" type="audio/mpeg">
+    <source src="{{ url_for('static', filename='audio/chirp.wav') }}" type="audio/wav">
   </audio>
   <div
     id="toast-root"

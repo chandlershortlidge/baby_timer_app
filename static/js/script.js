@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', function() {
         upcomingAlarmOverrideNapIndex: null,
         upcomingAlarmDismissedNapIndex: null,
         soundEnabled: true,
+        alarmSound: 'chirp',
     };
     let currentlyEditingNapIndex = null;
     let napTimerInterval = null;
@@ -68,12 +69,14 @@ document.addEventListener('DOMContentLoaded', function() {
     let scheduleEditMode = false;
     let scheduleEditSaving = false;
     let scheduleDraft = [];
+    let currentAlarmSoundKey = null;
 
     const MAX_UPCOMING_NAPS = 6;
     const MIN_NAP_DURATION_MIN = 20;
     const MAX_NAP_DURATION_MIN = 180;
     const DEFAULT_NEW_NAP_DURATION_MIN = 45;
     const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
+    const AVAILABLE_SOUNDS = ['chirp', 'marimba', 'bell'];
 
     function parseISODate(value) {
         if (!value) return null;
@@ -564,6 +567,44 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     appState.globalEndReminderSec = storedLeadTimeSec;
     appState.alarmLeadTimeSec = storedLeadTimeSec;
+
+    try {
+        const storedSoundChoice = localStorage.getItem('alarmSound');
+        if (typeof storedSoundChoice === 'string' && AVAILABLE_SOUNDS.includes(storedSoundChoice)) {
+            appState.alarmSound = storedSoundChoice;
+        } else if (storedSoundChoice == null) {
+            localStorage.setItem('alarmSound', appState.alarmSound);
+        }
+    } catch (error) {
+        console.warn('Unable to read selected alarm sound', error);
+    }
+
+    function resolveSoundUrl(key) {
+        if (!alarmAudio) return null;
+        const mappedKey = key.charAt(0).toUpperCase() + key.slice(1);
+        const datasetKey = `sound${mappedKey}`;
+        return alarmAudio.dataset?.[datasetKey] || alarmAudio.dataset?.soundChirp || null;
+    }
+
+    function loadAlarmAudioSource() {
+        if (!alarmAudio) return;
+        const soundKey = AVAILABLE_SOUNDS.includes(appState.alarmSound) ? appState.alarmSound : 'chirp';
+        if (currentAlarmSoundKey === soundKey) return;
+        const url = resolveSoundUrl(soundKey);
+        if (!url) return;
+        currentAlarmSoundKey = soundKey;
+        alarmAudio.src = url;
+        try {
+            alarmAudio.load();
+        } catch (error) {
+            console.warn('Unable to load alarm audio source', error);
+        }
+    }
+
+    loadAlarmAudioSource();
+    if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
+        alarmSoundSelect.value = appState.alarmSound;
+    }
     updateSoundToggleControl();
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
@@ -999,6 +1040,33 @@ document.addEventListener('DOMContentLoaded', function() {
     if (napAudioHint) {
         napAudioHint.addEventListener('click', () => {
             unlockAlarmAudioOnce();
+        });
+    }
+
+    if (alarmSoundToggle) {
+        alarmSoundToggle.addEventListener('click', () => {
+            appState.soundEnabled = !appState.soundEnabled;
+            try {
+                localStorage.setItem('napAlarmSoundEnabled', appState.soundEnabled ? 'true' : 'false');
+            } catch (error) {
+                console.warn('Unable to persist sound toggle', error);
+            }
+            if (!appState.soundEnabled) {
+                stopAlarmSound();
+            }
+            updateSoundToggleControl();
+        });
+    }
+
+    if (alarmSoundSelect) {
+        alarmSoundSelect.addEventListener('change', (event) => {
+            applySoundSelection(event.target.value);
+        });
+    }
+
+    if (alarmSoundTest) {
+        alarmSoundTest.addEventListener('click', () => {
+            playSoundPreview();
         });
     }
 
@@ -2280,6 +2348,63 @@ document.addEventListener('DOMContentLoaded', function() {
         renderReminderRow();
     }
 
+    function applySoundSelection(newSound) {
+        const normalized = String(newSound || '').toLowerCase();
+        if (!AVAILABLE_SOUNDS.includes(normalized)) return;
+        appState.alarmSound = normalized;
+        try {
+            localStorage.setItem('alarmSound', normalized);
+        } catch (error) {
+            console.warn('Unable to persist alarm sound selection', error);
+        }
+        loadAlarmAudioSource();
+        updateSoundToggleControl();
+    }
+
+    function playSoundPreview() {
+        if (!alarmAudio) return;
+        stopAlarmSound();
+        unlockAlarmAudioOnce().then((unlocked) => {
+            if (!unlocked) {
+                startFallbackTone();
+                return;
+            }
+            loadAlarmAudioSource();
+            alarmAudio.loop = false;
+            try {
+                alarmAudio.currentTime = 0;
+            } catch (error) {
+                console.warn('Unable to reset preview audio time', error);
+            }
+
+            if (alarmSoundStopTimer) {
+                clearTimeout(alarmSoundStopTimer);
+                alarmSoundStopTimer = null;
+            }
+
+            const onEnded = () => {
+                alarmAudio.removeEventListener('ended', onEnded);
+                stopAlarmSound();
+            };
+            alarmAudio.addEventListener('ended', onEnded, { once: true });
+
+            const playPromise = alarmAudio.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch((error) => {
+                    console.warn('Alarm sound preview blocked', error);
+                    alarmAudioUnlockFailed = true;
+                    updateSoundToggleControl();
+                    startFallbackTone();
+                });
+            }
+
+            alarmSoundStopTimer = window.setTimeout(() => {
+                alarmAudio.removeEventListener('ended', onEnded);
+                stopAlarmSound();
+            }, 5000);
+        });
+    }
+
     function computeFireTime(context) {
         const leadSecRequested = getLeadTimeSec();
         const now = nowMs();
@@ -2976,6 +3101,10 @@ document.addEventListener('DOMContentLoaded', function() {
             alarmSoundToggle.setAttribute('aria-pressed', appState.soundEnabled ? 'true' : 'false');
         }
 
+        if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
+            alarmSoundSelect.value = appState.alarmSound;
+        }
+
         if (napAudioHint) {
             if (hintShouldShow) {
                 napAudioHint.classList.remove('hidden');
@@ -3041,6 +3170,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function playAlarmSound() {
         if (!alarmAudio || !appState.soundEnabled) return;
+
+        loadAlarmAudioSource();
 
         unlockAlarmAudioOnce().then((unlocked) => {
             if (!unlocked || !appState.soundEnabled) {
