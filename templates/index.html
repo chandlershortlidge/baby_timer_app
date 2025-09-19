@@ -86,13 +86,16 @@
         </div>
 
         <div id="nap-alarm-sound-row" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700">
-          <span class="font-medium text-indigo-600">Sound</span>
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-indigo-600">Sound</span>
+            <span id="alarm-sound-current" class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-700">Chirp</span>
+          </div>
           <div class="flex flex-wrap items-center gap-3">
             <button id="alarm-sound-toggle" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-sm font-semibold text-indigo-600">On</button>
             <select id="alarm-sound-select" class="w-32 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm text-gray-700">
-              <option>Chirp</option>
-              <option>Marimba</option>
-              <option>Bell</option>
+              <option value="chirp">Chirp</option>
+              <option value="marimba">Marimba</option>
+              <option value="bell">Bell</option>
             </select>
             <button id="alarm-sound-test" type="button" class="text-sm font-semibold text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">Test</button>
           </div>
@@ -110,42 +113,6 @@
             <option value="1800">30 minutes</option>
           </select>
           <span id="nap-alarm-context" class="text-indigo-600">before nap</span>
-        </div>
-      </div>
-
-      <div class="space-y-4">
-        <div id="nap-reminder-row" class="flex items-start justify-between text-sm text-gray-700">
-          <div>
-            <span class="font-semibold">Nap alarm</span>
-            <p id="nap-reminder-helper" class="mt-1 hidden text-xs text-gray-500"></p>
-            <button id="nap-reminder-sound-toggle"
-                    type="button"
-                    class="mt-1 hidden text-xs font-medium text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">
-              Sound on
-            </button>
-            <button id="nap-audio-hint"
-                    type="button"
-                    class="mt-1 hidden text-xs font-medium text-amber-600 underline decoration-dotted decoration-1 underline-offset-2">
-              Tap to enable sound
-            </button>
-          </div>
-          <button id="nap-reminder-btn"
-                  type="button"
-                  class="flex h-11 min-w-[150px] items-center justify-between rounded-xl bg-white px-4 font-semibold text-indigo-600 shadow-sm ring-1 ring-indigo-200 transition disabled:cursor-not-allowed disabled:opacity-60"
-                  style="font-variant-numeric: tabular-nums;">
-            <span id="nap-reminder-text">--</span>
-            <span aria-hidden="true">⌄</span>
-          </button>
-        </div>
-      </div>
-
-      <div id="end-reminder-actions" class="hidden">
-        <div class="flex items-center justify-between rounded-xl bg-indigo-100/70 px-4 py-2 text-sm text-indigo-800">
-          <span class="font-semibold">Reminder fired</span>
-          <div class="flex items-center gap-3">
-            <button id="end-reminder-snooze" type="button" class="rounded-lg bg-white px-3 py-1 font-semibold text-indigo-700 shadow hover:bg-indigo-50">Snooze 2 min</button>
-            <button id="end-reminder-dismiss" type="button" class="rounded-lg bg-white/70 px-3 py-1 font-semibold text-indigo-700 hover:bg-white">Dismiss</button>
-          </div>
         </div>
       </div>
 

@@ -506,10 +506,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
-    const napReminderRow = document.getElementById('nap-reminder-row');
-    const napReminderBtn = document.getElementById('nap-reminder-btn');
-    const napReminderText = document.getElementById('nap-reminder-text');
-    const napReminderHelper = document.getElementById('nap-reminder-helper');
     const endReminderActions = document.getElementById('end-reminder-actions');
     const endReminderSnoozeBtn = document.getElementById('end-reminder-snooze');
     const endReminderDismissBtn = document.getElementById('end-reminder-dismiss');
@@ -527,6 +523,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const alarmSoundToggle = document.getElementById('alarm-sound-toggle');
     const alarmSoundSelect = document.getElementById('alarm-sound-select');
     const alarmSoundTest = document.getElementById('alarm-sound-test');
+    const alarmSoundCurrent = document.getElementById('alarm-sound-current');
     const ariaLiveRegion = document.getElementById('aria-live-region');
     const endReminderModal = document.getElementById('end-reminder-modal');
     const endReminderModalOptions = document.getElementById('end-reminder-options');
@@ -1002,38 +999,6 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 enterScheduleEditMode();
             }
-        });
-    }
-
-    if (napReminderBtn) {
-        const handleOpen = (event) => {
-            if (napReminderBtn.disabled) return;
-            event.preventDefault();
-            unlockAlarmAudioOnce();
-            openEndReminderModal();
-        };
-        napReminderBtn.addEventListener('click', handleOpen);
-        napReminderBtn.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                handleOpen(event);
-            }
-        });
-    }
-
-    if (napReminderSoundToggle) {
-        napReminderSoundToggle.addEventListener('click', () => {
-            appState.soundEnabled = !appState.soundEnabled;
-            try {
-                localStorage.setItem('napAlarmSoundEnabled', appState.soundEnabled ? 'true' : 'false');
-            } catch (error) {
-                console.warn('Unable to persist sound toggle', error);
-            }
-            if (!appState.soundEnabled) {
-                stopAlarmSound();
-            } else {
-                unlockAlarmAudioOnce();
-            }
-            updateSoundToggleControl();
         });
     }
 
@@ -2010,80 +1975,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function renderReminderRow() {
-        if (!napReminderBtn || !napReminderText || !napReminderRow) return;
-
-        napReminderRow.classList.remove('hidden');
-
-        const napActive = Boolean(appState.currentNap && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime()));
-        const hasUpcoming = Boolean(appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime()));
-        const scheduleError = appState.scheduleError;
-
-        const globalLead = Number(appState.globalEndReminderSec);
-        const overrideLead = Number(appState.endReminderSecOverride);
-        const leadSec = napActive && Number.isFinite(overrideLead)
-            ? overrideLead
-            : Number.isFinite(globalLead)
-                ? globalLead
-                : DEFAULT_END_REMINDER_LEAD_SEC;
-
-        const showHelper = (text) => {
-            if (!napReminderHelper) return;
-            if (text) {
-                napReminderHelper.textContent = text;
-                napReminderHelper.classList.remove('hidden');
-            } else {
-                napReminderHelper.textContent = '';
-                napReminderHelper.classList.add('hidden');
-            }
-        };
-
-        if (scheduleError) {
-            napReminderBtn.disabled = true;
-            napReminderBtn.setAttribute('aria-disabled', 'true');
-            napReminderText.textContent = formatDurationValue(leadSec);
-            showHelper('Settings unavailable');
-            return;
-        }
-
-        if (napActive) {
-            napReminderBtn.disabled = false;
-            napReminderBtn.setAttribute('aria-disabled', 'false');
-            napReminderText.textContent = formatDurationValue(leadSec);
-
-            if (leadSec > 0) {
-                let scheduled = appState.endReminderScheduledAt instanceof Date && !Number.isNaN(appState.endReminderScheduledAt?.getTime())
-                    ? appState.endReminderScheduledAt
-                    : null;
-
-                if (!scheduled && appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime())) {
-                    scheduled = new Date(appState.currentNapProjectedEnd.getTime() - leadSec * 1000);
-                }
-
-                showHelper(scheduled ? `before nap ends • fires at ${formatTime(scheduled)}` : 'before nap ends');
-            } else {
-                napReminderHelper.classList.add('hidden');
-            }
-            return;
-        }
-
-        if (hasUpcoming) {
-            napReminderBtn.disabled = false;
-            napReminderBtn.setAttribute('aria-disabled', 'false');
-            napReminderText.textContent = formatDurationValue(leadSec);
-            if (appState.upcomingAlarmDismissedNapIndex != null && appState.nextNap && appState.nextNap.nap_index === appState.upcomingAlarmDismissedNapIndex) {
-                showHelper('Dismissed for today');
-            } else if (appState.upcomingAlarmScheduledAt instanceof Date && !Number.isNaN(appState.upcomingAlarmScheduledAt?.getTime())) {
-                showHelper(`before next nap • fires at ${formatTime(appState.upcomingAlarmScheduledAt)}`);
-            } else {
-                showHelper('before next nap');
-            }
-        } else {
-            napReminderBtn.disabled = true;
-            napReminderBtn.setAttribute('aria-disabled', 'true');
-            napReminderText.textContent = formatDurationValue(leadSec);
-            showHelper('No upcoming naps');
-        }
-
         renderNapAlarmChip();
     }
 
@@ -3103,6 +2994,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
             alarmSoundSelect.value = appState.alarmSound;
+        }
+
+        if (alarmSoundCurrent) {
+            const label = appState.alarmSound ? appState.alarmSound.charAt(0).toUpperCase() + appState.alarmSound.slice(1) : 'Chirp';
+            alarmSoundCurrent.textContent = label;
         }
 
         if (napAudioHint) {
