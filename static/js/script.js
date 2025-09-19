@@ -64,6 +64,399 @@ document.addEventListener('DOMContentLoaded', function() {
     let fallbackAudioCtx = null;
     let fallbackGainNode = null;
     let fallbackOscillator = null;
+    let scheduleEditMode = false;
+    let scheduleEditSaving = false;
+    let scheduleDraft = [];
+
+    const MAX_UPCOMING_NAPS = 6;
+    const MIN_NAP_DURATION_MIN = 20;
+    const MAX_NAP_DURATION_MIN = 180;
+    const DEFAULT_NEW_NAP_DURATION_MIN = 45;
+    const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
+
+    function parseISODate(value) {
+        if (!value) return null;
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed?.getTime())) return null;
+        return parsed;
+    }
+
+    function formatTimeForInput(date) {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+    }
+
+    function getWakeWindowForIndex(index) {
+        if (!Number.isInteger(index) || index < 0) return WAKE_WINDOWS_MIN[WAKE_WINDOWS_MIN.length - 1];
+        return WAKE_WINDOWS_MIN[Math.min(index, WAKE_WINDOWS_MIN.length - 1)];
+    }
+
+    function getStatusDotClass(status) {
+        if (status === 'finished') return 'bg-gray-400';
+        if (status === 'in_progress') return 'bg-blue-500';
+        return 'bg-green-400';
+    }
+
+    function computeScheduleTimeline() {
+        const timeline = [];
+        if (!Array.isArray(appState.naps)) return timeline;
+
+        let reference = parseISODate(appState.day?.first_wake_at) || new Date(nowMs());
+        if (Number.isNaN(reference.getTime())) reference = new Date(nowMs());
+
+        appState.naps.forEach((nap, idx) => {
+            const plannedStart = parseISODate(nap.planned_start_at);
+            const actualStart = parseISODate(nap.actual_start_at);
+            const actualEnd = parseISODate(nap.actual_end_at);
+            const durationSec = Number.isFinite(nap.adjusted_duration_sec)
+                ? nap.adjusted_duration_sec
+                : Number.isFinite(nap.planned_duration_sec)
+                    ? nap.planned_duration_sec
+                    : 0;
+
+            let inferredStart = plannedStart || null;
+            if (!inferredStart) {
+                if ((nap.status === 'finished' || nap.status === 'in_progress') && actualStart) {
+                    inferredStart = actualStart;
+                } else {
+                    const windowMin = getWakeWindowForIndex(idx);
+                    inferredStart = new Date(reference.getTime() + windowMin * 60000);
+                }
+            }
+
+            let endTime = null;
+            if (actualEnd) {
+                endTime = actualEnd;
+            } else if (inferredStart && Number.isFinite(durationSec)) {
+                endTime = new Date(inferredStart.getTime() + Math.max(0, durationSec) * 1000);
+            } else {
+                endTime = reference;
+            }
+
+            timeline.push({
+                nap,
+                index: nap.nap_index,
+                plannedStart,
+                actualStart,
+                actualEnd,
+                inferredStart,
+                endTime,
+                durationSec,
+            });
+
+            if (endTime) {
+                reference = endTime;
+            }
+        });
+
+        return timeline;
+    }
+
+    function buildScheduleDraftFromState() {
+        scheduleDraft = [];
+        const timeline = computeScheduleTimeline();
+        timeline
+            .filter((item) => item.nap.status === 'upcoming')
+            .forEach((item) => {
+                const startSource = item.plannedStart || item.inferredStart;
+                const durationMin = item.durationSec ? Math.round(item.durationSec / 60) : '';
+                scheduleDraft.push({
+                    index: item.index,
+                    startValue: startSource ? formatTimeForInput(startSource) : '',
+                    durationValue: durationMin ? String(durationMin) : '',
+                    errors: [],
+                    isNew: false,
+                    computed: null,
+                });
+            });
+        scheduleDraft.sort((a, b) => a.index - b.index);
+    }
+
+    function ensureScheduleDraftSorted() {
+        scheduleDraft.sort((a, b) => a.index - b.index);
+    }
+
+    function getLatestLockedEndMs() {
+        const timeline = computeScheduleTimeline();
+        let latest = null;
+        timeline.forEach((item) => {
+            if (item.nap.status !== 'upcoming' && item.endTime instanceof Date && !Number.isNaN(item.endTime.getTime())) {
+                const endMs = item.endTime.getTime();
+                latest = latest == null ? endMs : Math.max(latest, endMs);
+            }
+        });
+        if (appState.currentNap) {
+            const currentTime = nowMs();
+            latest = latest == null ? currentTime : Math.max(latest, currentTime);
+        }
+        return latest;
+    }
+
+    function getLatestDraftEndMs() {
+        let latest = null;
+        scheduleDraft.forEach((entry) => {
+            if (entry.computed?.endMs != null) {
+                latest = latest == null ? entry.computed.endMs : Math.max(latest, entry.computed.endMs);
+            }
+        });
+        if (latest != null) return latest;
+
+        const timeline = computeScheduleTimeline();
+        timeline.forEach((item) => {
+            if (item.endTime instanceof Date && !Number.isNaN(item.endTime.getTime())) {
+                latest = latest == null ? item.endTime.getTime() : Math.max(latest, item.endTime.getTime());
+            }
+        });
+        return latest;
+    }
+
+    function getLastDraftDurationMin() {
+        for (let idx = scheduleDraft.length - 1; idx >= 0; idx -= 1) {
+            const value = Number.parseInt(scheduleDraft[idx].durationValue, 10);
+            if (Number.isFinite(value) && value > 0) return value;
+        }
+        const timeline = computeScheduleTimeline();
+        for (let idx = timeline.length - 1; idx >= 0; idx -= 1) {
+            const value = timeline[idx].durationSec ? Math.round(timeline[idx].durationSec / 60) : null;
+            if (value) return value;
+        }
+        return DEFAULT_NEW_NAP_DURATION_MIN;
+    }
+
+    function validateScheduleDraft({ mutate = true } = {}) {
+        let hasErrors = false;
+        const dayDate = appState.day?.date;
+        const latestLockedEnd = getLatestLockedEndMs();
+
+        const parsedEntries = [];
+
+        scheduleDraft.forEach((entry) => {
+            entry.errors = [];
+            if (mutate) entry.computed = null;
+
+            const trimmedStart = (entry.startValue || '').trim();
+            const trimmedDuration = (entry.durationValue || '').trim();
+
+            let startMs = null;
+            let startIso = null;
+            let durationMin = null;
+            let endMs = null;
+
+            if (!trimmedStart || !dayDate) {
+                entry.errors.push('Enter a start time');
+            } else {
+                const candidate = new Date(`${dayDate}T${trimmedStart}:00`);
+                if (Number.isNaN(candidate.getTime())) {
+                    entry.errors.push('Enter a start time');
+                } else {
+                    startMs = candidate.getTime();
+                    startIso = `${dayDate}T${trimmedStart}:00`;
+                }
+            }
+
+            if (!trimmedDuration) {
+                entry.errors.push('Duration must be 20–180 min');
+            } else {
+                const durationInt = Number.parseInt(trimmedDuration, 10);
+                if (!Number.isFinite(durationInt) || durationInt < MIN_NAP_DURATION_MIN || durationInt > MAX_NAP_DURATION_MIN) {
+                    entry.errors.push('Duration must be 20–180 min');
+                } else {
+                    durationMin = durationInt;
+                }
+            }
+
+            if (startMs != null && durationMin != null) {
+                endMs = startMs + durationMin * 60000;
+            }
+
+            if (appState.currentNap && startMs != null && startMs < nowMs()) {
+                entry.errors.push('Cannot schedule earlier than current time');
+            }
+
+            parsedEntries.push({ entry, startMs, endMs, startIso, durationMin });
+        });
+
+        const validEntries = parsedEntries.filter((item) => item.startMs != null && item.endMs != null);
+        validEntries.sort((a, b) => a.startMs - b.startMs);
+
+        let previousEntry = null;
+        let previousEnd = latestLockedEnd != null ? latestLockedEnd : null;
+        validEntries.forEach((item) => {
+            if (previousEnd != null && item.startMs < previousEnd) {
+                item.entry.errors.push('Naps can’t overlap');
+                if (previousEntry && previousEntry.entry) {
+                    previousEntry.entry.errors.push('Naps can’t overlap');
+                }
+            }
+            previousEnd = Math.max(previousEnd ?? item.endMs, item.endMs);
+            previousEntry = item;
+        });
+
+        scheduleDraft.forEach((entry) => {
+            if (entry.errors.length > 0) {
+                hasErrors = true;
+            }
+        });
+
+        if (mutate) {
+            parsedEntries.forEach((item) => {
+                item.entry.computed = {
+                    startMs: item.startMs,
+                    endMs: item.endMs,
+                    startIso: item.startIso,
+                    durationMin: item.durationMin,
+                };
+            });
+        }
+
+        return { isValid: !hasErrors };
+    }
+
+    function handleAddDraftNap() {
+        if (scheduleDraft.length >= MAX_UPCOMING_NAPS) return;
+
+        ensureScheduleDraftSorted();
+        validateScheduleDraft({ mutate: true });
+
+        const maxExistingIndex = Math.max(
+            0,
+            ...appState.naps.map((nap) => Number(nap.nap_index) || 0),
+            ...scheduleDraft.map((entry) => Number(entry.index) || 0)
+        );
+        const newIndex = maxExistingIndex + 1;
+
+        const latestEndMs = getLatestDraftEndMs();
+        let suggestedStartMs = latestEndMs != null
+            ? latestEndMs + getWakeWindowForIndex(newIndex - 1) * 60000
+            : null;
+
+        if (suggestedStartMs == null) {
+            const firstWake = parseISODate(appState.day?.first_wake_at);
+            if (firstWake) {
+                suggestedStartMs = firstWake.getTime() + getWakeWindowForIndex(newIndex - 1) * 60000;
+            } else {
+                suggestedStartMs = nowMs() + getWakeWindowForIndex(newIndex - 1) * 60000;
+            }
+        }
+
+        const startDate = new Date(suggestedStartMs);
+        const defaultDuration = getLastDraftDurationMin() || DEFAULT_NEW_NAP_DURATION_MIN;
+
+        scheduleDraft.push({
+            index: newIndex,
+            startValue: formatTimeForInput(startDate),
+            durationValue: String(defaultDuration),
+            errors: [],
+            isNew: true,
+            computed: null,
+        });
+
+        ensureScheduleDraftSorted();
+        validateScheduleDraft({ mutate: true });
+        renderSchedule();
+    }
+
+    function removeDraftEntry(index) {
+        scheduleDraft = scheduleDraft.filter((entry) => entry.index !== index);
+        validateScheduleDraft({ mutate: true });
+        renderSchedule();
+    }
+
+    function updateDraftEntry(index, updates) {
+        const entry = scheduleDraft.find((item) => item.index === index);
+        if (!entry) return;
+        if (Object.prototype.hasOwnProperty.call(updates, 'startValue')) {
+            entry.startValue = updates.startValue;
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'durationValue')) {
+            entry.durationValue = updates.durationValue;
+        }
+        renderSchedule();
+    }
+
+    function enterScheduleEditMode() {
+        if (!appState.day) return;
+        scheduleEditMode = true;
+        scheduleEditSaving = false;
+        buildScheduleDraftFromState();
+        validateScheduleDraft({ mutate: true });
+        if (scheduleList) {
+            scheduleList.classList.remove('hidden');
+        }
+        if (scheduleToggleBtn) scheduleToggleBtn.setAttribute('aria-expanded', 'true');
+        if (scheduleToggleIcon) {
+            scheduleToggleIcon.classList.remove('rotate-180');
+            scheduleToggleIcon.setAttribute('aria-expanded', 'true');
+        }
+        announce(`Editing schedule, ${scheduleDraft.length} upcoming ${scheduleDraft.length === 1 ? 'nap' : 'naps'}.`);
+        renderSchedule();
+    }
+
+    function handleScheduleSave() {
+        if (scheduleEditSaving) return;
+
+        const validation = validateScheduleDraft({ mutate: true });
+        renderSchedule();
+
+        if (!validation.isValid) {
+            showToast("Couldn't save schedule. Fix highlighted rows.", 'error');
+            announce("Couldn't save schedule. Fix highlighted rows.");
+            return;
+        }
+
+        scheduleEditSaving = true;
+        renderSchedule();
+
+        const payload = scheduleDraft
+            .slice()
+            .sort((a, b) => a.index - b.index)
+            .map((entry) => ({
+                index: entry.index,
+                start_at: entry.computed?.startIso,
+                duration_sec: (entry.computed?.durationMin || 0) * 60,
+            }));
+
+        fetch('/api/schedule/today', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ naps: payload }),
+        })
+        .then((res) => res.json().catch(() => ({})).then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok || !data || data.status !== 'success') {
+                throw new Error(data?.message || 'Failed to update schedule');
+            }
+
+            if (data.day) {
+                appState.day = data.day;
+            }
+            if (Array.isArray(data.naps)) {
+                appState.naps = data.naps;
+                appState.currentNap = appState.naps.find((nap) => nap.status === 'in_progress') || null;
+                appState.nextNap = appState.naps.find((nap) => nap.status === 'upcoming') || null;
+            }
+
+            scheduleEditMode = false;
+            scheduleEditSaving = false;
+            scheduleDraft = [];
+
+            renderSchedule();
+            scheduleNapReminder();
+            renderReminderRow();
+            renderSleepSummary();
+            showToast('Schedule updated.', 'success');
+            announce('Schedule updated.');
+        })
+        .catch((error) => {
+            console.error('Failed to update nap schedule', error);
+            scheduleEditSaving = false;
+            renderSchedule();
+            showToast("Couldn't save schedule. Fix highlighted rows.", 'error');
+            announce("Couldn't save schedule. Fix highlighted rows.");
+        });
+    }
 
 
     // Global dev clock (0 by default). Positive = pretend it's later.
@@ -97,7 +490,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const napHelperText = document.getElementById('nap-helper-text');
     const napTimerContainer = document.getElementById('nap-timer-container');
     const napTimerDisplay = document.getElementById('nap-timer-display');
-    const scheduleHeader = document.getElementById('schedule-header');
+    const scheduleToggleBtn = document.getElementById('schedule-toggle-btn');
+    const scheduleEditBtn = document.getElementById('schedule-edit-btn');
     const scheduleList = document.getElementById('schedule-list');
     const scheduleSummary = document.getElementById('schedule-summary');
     const scheduleToggleIcon = document.getElementById('schedule-toggle-icon');
@@ -509,10 +903,32 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (scheduleHeader) {
-        scheduleHeader.addEventListener('click', () => {
-            scheduleList.classList.toggle('hidden');
-            if (scheduleToggleIcon) scheduleToggleIcon.classList.toggle('rotate-180');
+    const toggleScheduleList = () => {
+        if (!scheduleList || scheduleEditMode) return;
+        scheduleList.classList.toggle('hidden');
+        const isOpen = !scheduleList.classList.contains('hidden');
+        if (scheduleToggleBtn) scheduleToggleBtn.setAttribute('aria-expanded', String(isOpen));
+        if (scheduleToggleIcon) {
+            scheduleToggleIcon.setAttribute('aria-expanded', String(isOpen));
+            scheduleToggleIcon.classList.toggle('rotate-180', !isOpen);
+        }
+    };
+
+    if (scheduleToggleBtn) {
+        scheduleToggleBtn.addEventListener('click', toggleScheduleList);
+    }
+
+    if (scheduleToggleIcon) {
+        scheduleToggleIcon.addEventListener('click', toggleScheduleList);
+    }
+
+    if (scheduleEditBtn) {
+        scheduleEditBtn.addEventListener('click', () => {
+            if (scheduleEditMode) {
+                handleScheduleSave();
+            } else {
+                enterScheduleEditMode();
+            }
         });
     }
 
@@ -749,104 +1165,97 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderSchedule() {
         if (!scheduleList || !scheduleSummary) return;
 
-        const bedtimeActive = Boolean(appState.sleepSession && !appState.sleepSession.end_at && appState.sleepSession.start_at);
+        const editing = scheduleEditMode;
 
-        scheduleList.innerHTML = '';
+        if (scheduleEditBtn) {
+            const label = editing ? (scheduleEditSaving ? 'Saving…' : 'Done') : 'Edit';
+            scheduleEditBtn.textContent = label;
+            scheduleEditBtn.disabled = scheduleEditSaving;
+            scheduleEditBtn.setAttribute('aria-pressed', editing ? 'true' : 'false');
+        }
 
         if (!appState.day) {
-            appState.nextNapPlannedStart = null;
-            appState.currentNapProjectedEnd = null;
-            appState.endReminderSecOverride = null;
-            appState.endReminderOverrideNapIndex = null;
+            scheduleList.innerHTML = '';
+            scheduleSummary.textContent = 'Wake up time not logged yet.';
+            scheduleEditMode = false;
+            scheduleEditSaving = false;
+            scheduleDraft = [];
             cancelEndReminder({ skipRender: true });
             cancelAlarms();
             stopAlarmSound();
-
+            if (scheduleEditBtn) scheduleEditBtn.disabled = true;
             if (napTimerInterval) {
                 clearInterval(napTimerInterval);
                 napTimerInterval = null;
             }
             if (napTimerDisplay) napTimerDisplay.textContent = '00:00';
-            napOverNotified = false;
             if (napTimerContainer) napTimerContainer.classList.add('hidden');
-
-            scheduleSummary.textContent = bedtimeActive ? 'Night sleep in progress.' : 'Wake up time not logged yet.';
             renderSleepSummary();
-            lastNapActive = false;
             return;
         }
+
+        if (editing) {
+            validateScheduleDraft({ mutate: true });
+        }
+
+        if (scheduleToggleBtn) scheduleToggleBtn.disabled = editing;
+        if (scheduleToggleIcon) scheduleToggleIcon.disabled = editing;
 
         if (appState.endReminderOverrideNapIndex != null && (!appState.currentNap || appState.currentNap.nap_index !== appState.endReminderOverrideNapIndex)) {
             appState.endReminderSecOverride = null;
             appState.endReminderOverrideNapIndex = null;
         }
 
-        let lastEventEndTime = appState.day.first_wake_at ? new Date(appState.day.first_wake_at) : new Date(nowMs());
-        if (Number.isNaN(lastEventEndTime.getTime())) {
-            lastEventEndTime = new Date(nowMs());
-        }
-
+        const timeline = computeScheduleTimeline();
+        const upcomingCount = appState.naps.filter((nap) => nap.status === 'upcoming').length;
         const firstUpcomingNap = appState.naps.find((nap) => nap.status === 'upcoming') || null;
         appState.nextNap = firstUpcomingNap;
 
-        if (!firstUpcomingNap) {
-            appState.upcomingAlarmDismissedNapIndex = null;
-            appState.upcomingAlarmOverrideMs = null;
-            appState.upcomingAlarmOverrideNapIndex = null;
-        } else {
-            if (appState.upcomingAlarmDismissedNapIndex != null && firstUpcomingNap.nap_index !== appState.upcomingAlarmDismissedNapIndex) {
-                appState.upcomingAlarmDismissedNapIndex = null;
-            }
-            if (appState.upcomingAlarmOverrideNapIndex != null && firstUpcomingNap.nap_index !== appState.upcomingAlarmOverrideNapIndex) {
-                appState.upcomingAlarmOverrideMs = null;
-                appState.upcomingAlarmOverrideNapIndex = null;
-            }
+        const nextUpcomingItem = timeline.find((item) => item.nap.status === 'upcoming' && item.inferredStart instanceof Date);
+        const nextUpcomingNapTime = nextUpcomingItem ? nextUpcomingItem.inferredStart : null;
+        appState.nextNapPlannedStart = nextUpcomingNapTime || null;
+
+        if (editing && scheduleDraft.length === 0 && upcomingCount > 0) {
+            buildScheduleDraftFromState();
+            validateScheduleDraft({ mutate: true });
         }
 
-        let nextUpcomingNapTime = null;
-        const WAKE_WINDOWS_MIN = [120, 150, 150, 180];
+        scheduleList.innerHTML = '';
 
-        appState.naps.forEach((nap, index) => {
-            const li = document.createElement('li');
-            li.className = 'flex items-center justify-between rounded-xl bg-gray-50 p-4';
-            li.setAttribute('data-nap-index', String(nap.nap_index));
-            const durationSec = nap.adjusted_duration_sec || nap.planned_duration_sec;
-            const durationMin = Math.round(durationSec / 60);
-            const wakeWindowMs = (WAKE_WINDOWS_MIN[index] || WAKE_WINDOWS_MIN[WAKE_WINDOWS_MIN.length - 1]) * 60 * 1000;
-            const projectedStartAt = new Date(lastEventEndTime.getTime() + wakeWindowMs);
-            const displayTime = nap.actual_start_at ? new Date(nap.actual_start_at) : projectedStartAt;
-
-            if (nap.status === 'upcoming' && !nextUpcomingNapTime) {
-                nextUpcomingNapTime = displayTime;
+        const lockedItems = timeline.filter((item) => item.nap.status !== 'upcoming');
+        lockedItems.forEach((item) => {
+            if (editing) {
+                scheduleList.appendChild(buildLockedEditRow(item));
+            } else {
+                scheduleList.appendChild(buildReadOnlyRow(item));
             }
-
-            li.innerHTML = `
-                <div class="flex items-center space-x-4">
-                    <div class="w-2 h-2 rounded-full ${nap.status === 'finished' ? 'bg-gray-400' : nap.status === 'in_progress' ? 'bg-blue-500' : 'bg-green-400'}"></div>
-                    <div>
-                        <p class="font-semibold text-gray-800">${formatTime(displayTime)} <span class="text-sm font-normal text-gray-500">(${durationMin} min)</span></p>
-                        <p class="text-xs font-medium ${nap.status === 'finished' ? 'text-gray-600' : 'text-green-600'}">${nap.status.replace('_', ' ')}</p>
-                    </div>
-                </div>
-                <div class="flex items-center gap-2">
-                    <span class="container nap-chip hidden inline-flex w-auto flex-none items-center gap-1 rounded-full border border-gray-200 bg-white/70 px-2 py-0.5 text-xs font-medium leading-tight text-gray-600">⏰</span>
-                    <button data-nap-index="${nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
-                </div>
-            `;
-
-            scheduleList.appendChild(li);
-
-            const napEndAt = nap.actual_end_at ? new Date(nap.actual_end_at) : new Date(displayTime.getTime() + durationSec * 1000);
-            lastEventEndTime = napEndAt;
         });
 
-        appState.nextNapPlannedStart = nextUpcomingNapTime;
-        appState.currentNapProjectedEnd = appState.currentNap
-            ? new Date(new Date(appState.currentNap.actual_start_at).getTime() + (appState.currentNap.adjusted_duration_sec || appState.currentNap.planned_duration_sec) * 1000)
-            : null;
+        if (editing) {
+            ensureScheduleDraftSorted();
+            scheduleDraft.forEach((entry) => {
+                scheduleList.appendChild(buildEditableDraftRow(entry));
+            });
+            scheduleList.appendChild(buildAddNapRow());
+        } else {
+            timeline
+                .filter((item) => item.nap.status === 'upcoming')
+                .forEach((item) => scheduleList.appendChild(buildReadOnlyRow(item)));
+        }
 
-        const remainingNaps = appState.naps.filter((nap) => nap.status === 'upcoming').length;
-        scheduleSummary.textContent = `${remainingNaps} naps remaining • Next: ${formatTime(nextUpcomingNapTime)}`;
+        const remainingLabel = `${upcomingCount} ${upcomingCount === 1 ? 'nap' : 'naps'} remaining`;
+        scheduleSummary.textContent = nextUpcomingNapTime instanceof Date && !Number.isNaN(nextUpcomingNapTime.getTime())
+            ? `${remainingLabel} • Next: ${formatTime(nextUpcomingNapTime)}`
+            : remainingLabel;
+
+        if (scheduleToggleBtn) {
+            const isOpen = !scheduleList.classList.contains('hidden');
+            scheduleToggleBtn.setAttribute('aria-expanded', String(isOpen));
+            if (scheduleToggleIcon) {
+                scheduleToggleIcon.setAttribute('aria-expanded', String(isOpen));
+                scheduleToggleIcon.classList.toggle('rotate-180', !isOpen);
+            }
+        }
 
         if (napTimerInterval) {
             clearInterval(napTimerInterval);
@@ -854,25 +1263,183 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (appState.currentNap) {
-            const currentNapEnd = appState.currentNapProjectedEnd;
-            const napDurationSec = appState.currentNap.adjusted_duration_sec || appState.currentNap.planned_duration_sec;
-            const startTime = new Date(appState.currentNap.actual_start_at).getTime();
-            napEndTime = currentNapEnd ? currentNapEnd.getTime() : startTime + napDurationSec * 1000;
-            napOverNotified = false;
-            updateTimerDisplay();
-            napTimerInterval = setInterval(updateTimerDisplay, 1000);
-            if (napTimerContainer) napTimerContainer.classList.remove('hidden');
-        } else if (napTimerContainer) {
-            napTimerContainer.classList.add('hidden');
+            const currentItem = timeline.find((item) => item.nap.status === 'in_progress');
+            if (currentItem) {
+                const durationSec = currentItem.durationSec || 0;
+                const startTime = currentItem.actualStart ? currentItem.actualStart.getTime() : (currentItem.inferredStart ? currentItem.inferredStart.getTime() : nowMs());
+                const projectedEnd = currentItem.endTime instanceof Date ? currentItem.endTime.getTime() : startTime + durationSec * 1000;
+                appState.currentNapProjectedEnd = new Date(projectedEnd);
+                napEndTime = projectedEnd;
+                napOverNotified = false;
+                updateTimerDisplay();
+                napTimerInterval = setInterval(updateTimerDisplay, 1000);
+                if (napTimerContainer) napTimerContainer.classList.remove('hidden');
+            } else {
+                appState.currentNapProjectedEnd = null;
+                if (napTimerContainer) napTimerContainer.classList.add('hidden');
+            }
+        } else {
+            appState.currentNapProjectedEnd = null;
+            if (napTimerContainer) {
+                napTimerContainer.classList.add('hidden');
+            }
         }
 
         renderSleepSummary();
-        renderNapAlarmChip();
+        if (!editing) {
+            renderNapAlarmChip();
+        }
         updateSoundToggleControl();
     }
 
+    function buildReadOnlyRow(item) {
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between rounded-xl bg-gray-50 p-4';
+        li.setAttribute('data-nap-index', String(item.index));
+
+        const durationMin = item.durationSec ? Math.round(item.durationSec / 60) : null;
+        const displayStart = item.actualStart || item.inferredStart;
+        const statusLabel = item.nap.status.replace('_', ' ');
+        const statusColor = item.nap.status === 'finished'
+            ? 'text-gray-600'
+            : item.nap.status === 'in_progress'
+                ? 'text-blue-600'
+                : 'text-green-600';
+
+        const startText = displayStart ? formatTime(displayStart) : '—';
+        const durationText = durationMin ? `(${durationMin} min)` : '';
+        const chipHtml = item.nap.status === 'upcoming'
+            ? '<span class="container nap-chip hidden inline-flex w-auto flex-none items-center gap-1 rounded-full border border-gray-200 bg-white/70 px-2 py-0.5 text-xs font-medium leading-tight text-gray-600">⏰</span>'
+            : '';
+
+        const editButtonHtml = `<button data-nap-index="${item.nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>`;
+
+        li.innerHTML = `
+            <div class="flex items-center space-x-4">
+                <div class="w-2 h-2 rounded-full ${getStatusDotClass(item.nap.status)}"></div>
+                <div>
+                    <p class="text-xs font-medium text-gray-500">Nap ${item.index}</p>
+                    <p class="font-semibold text-gray-800">${startText} <span class="text-sm font-normal text-gray-500">${durationText}</span></p>
+                    <p class="text-xs font-medium ${statusColor}">${statusLabel}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                ${chipHtml}
+                ${editButtonHtml}
+            </div>
+        `;
+        return li;
+    }
+
+    function buildLockedEditRow(item) {
+        const li = document.createElement('li');
+        li.className = 'rounded-xl bg-gray-50 p-4';
+        li.setAttribute('data-nap-index', String(item.index));
+
+        const durationMin = item.durationSec ? Math.round(item.durationSec / 60) : null;
+        const displayStart = item.actualStart || item.inferredStart;
+        const timingText = `${formatTime(displayStart)} • ${durationMin ? `${durationMin} min` : '--'}`;
+        const statusLabel = item.nap.status.replace('_', ' ');
+
+        li.innerHTML = `
+            <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div class="h-2 w-2 rounded-full ${getStatusDotClass(item.nap.status)}"></div>
+                    <div>
+                        <p class="text-sm font-semibold text-gray-800">Nap ${item.index}</p>
+                        <p class="text-xs font-medium text-gray-500">${statusLabel}</p>
+                        <p class="text-xs text-gray-600">${timingText}</p>
+                    </div>
+                </div>
+                <span class="text-gray-400" role="img" aria-label="In progress / Finished" title="In progress / Finished">🔒</span>
+            </div>
+        `;
+        return li;
+    }
+
+    function buildEditableDraftRow(entry) {
+        const li = document.createElement('li');
+        li.className = 'rounded-xl border border-indigo-200 bg-white p-4';
+        li.setAttribute('data-nap-index', String(entry.index));
+
+        const errorId = `nap-edit-error-${entry.index}`;
+        const timeErrors = entry.errors.filter((msg) => ['Enter a start time', 'Cannot schedule earlier than current time', 'Naps can’t overlap'].includes(msg));
+        const durationErrors = entry.errors.filter((msg) => msg === 'Duration must be 20–180 min');
+        const hasErrors = entry.errors.length > 0;
+
+        const timeClasses = ['w-full', 'rounded-xl', 'border', 'px-3', 'py-2', 'text-sm', 'focus:outline-none', 'focus:ring-2', 'focus:ring-indigo-500'];
+        if (timeErrors.length > 0) {
+            timeClasses.push('border-red-500', 'focus:ring-red-500');
+        }
+        const durationClasses = ['w-full', 'rounded-xl', 'border', 'px-3', 'py-2', 'text-sm', 'focus:outline-none', 'focus:ring-2', 'focus:ring-indigo-500'];
+        if (durationErrors.length > 0) {
+            durationClasses.push('border-red-500', 'focus:ring-red-500');
+        }
+
+        const describedAttr = hasErrors ? ` aria-describedby="${errorId}"` : '';
+
+        li.innerHTML = `
+            <div class="flex items-center gap-3">
+                <div class="h-2 w-2 rounded-full ${getStatusDotClass('upcoming')}"></div>
+                <div>
+                    <p class="text-sm font-semibold text-gray-800">Nap ${entry.index}</p>
+                    <p class="text-xs text-gray-500">Upcoming</p>
+                </div>
+            </div>
+            <div class="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <div>
+                    <label class="sr-only" for="nap-start-${entry.index}">Start time</label>
+                    <input id="nap-start-${entry.index}" type="time" class="${timeClasses.join(' ')}" value="${entry.startValue || ''}"${timeErrors.length > 0 ? ' aria-invalid="true"' : ''}${describedAttr} data-nap-index="${entry.index}" />
+                </div>
+                <div>
+                    <label class="sr-only" for="nap-duration-${entry.index}">Duration (min)</label>
+                    <input id="nap-duration-${entry.index}" type="number" min="${MIN_NAP_DURATION_MIN}" max="${MAX_NAP_DURATION_MIN}" step="1" class="${durationClasses.join(' ')}" value="${entry.durationValue || ''}"${durationErrors.length > 0 ? ' aria-invalid="true"' : ''}${describedAttr} data-nap-index="${entry.index}" />
+                </div>
+                <div class="flex items-center justify-end">
+                    <button type="button" class="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100" aria-label="Remove Nap ${entry.index}" data-remove-nap="${entry.index}">🗑️</button>
+                </div>
+            </div>
+            ${hasErrors ? `<p id="${errorId}" class="mt-2 text-xs text-red-600">${entry.errors.join(' • ')}</p>` : ''}
+        `;
+
+        const timeInput = li.querySelector(`#nap-start-${entry.index}`);
+        if (timeInput) {
+            timeInput.disabled = scheduleEditSaving;
+            timeInput.addEventListener('input', (event) => updateDraftEntry(entry.index, { startValue: event.target.value }));
+        }
+        const durationInput = li.querySelector(`#nap-duration-${entry.index}`);
+        if (durationInput) {
+            durationInput.disabled = scheduleEditSaving;
+            durationInput.addEventListener('input', (event) => updateDraftEntry(entry.index, { durationValue: event.target.value }));
+        }
+        const removeBtn = li.querySelector('[data-remove-nap]');
+        if (removeBtn) {
+            removeBtn.disabled = scheduleEditSaving;
+            removeBtn.addEventListener('click', () => removeDraftEntry(entry.index));
+        }
+
+        return li;
+    }
+
+    function buildAddNapRow() {
+        const li = document.createElement('li');
+        const disabled = scheduleDraft.length >= MAX_UPCOMING_NAPS;
+        li.className = 'flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-indigo-200 bg-white p-3';
+        li.innerHTML = `
+            <button type="button" id="schedule-add-nap-btn" class="flex w-full items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50" ${disabled ? 'disabled' : ''}>+ Add nap</button>
+            ${disabled ? '<p class="mt-2 text-xs text-gray-500">Max naps reached.</p>' : ''}
+        `;
+        const addBtn = li.querySelector('#schedule-add-nap-btn');
+        if (addBtn) {
+            if (scheduleEditSaving) addBtn.disabled = true;
+            addBtn.addEventListener('click', handleAddDraftNap);
+        }
+        return li;
+    }
+
+
     function renderNapAlarmChip() {
-        if (!scheduleList) return;
+        if (!scheduleList || scheduleEditMode) return;
 
         const chips = scheduleList.querySelectorAll('.nap-chip');
         chips.forEach((chip) => {
