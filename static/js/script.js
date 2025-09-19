@@ -380,6 +380,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!appState.day) return;
         scheduleEditMode = true;
         scheduleEditSaving = false;
+        appState.upcomingAlarmDismissedNapIndex = null;
+        appState.upcomingAlarmOverrideMs = null;
+        appState.upcomingAlarmOverrideNapIndex = null;
         buildScheduleDraftFromState();
         validateScheduleDraft({ mutate: true });
         if (scheduleList) {
@@ -437,6 +440,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 appState.currentNap = appState.naps.find((nap) => nap.status === 'in_progress') || null;
                 appState.nextNap = appState.naps.find((nap) => nap.status === 'upcoming') || null;
             }
+
+            appState.upcomingAlarmDismissedNapIndex = null;
+            appState.upcomingAlarmOverrideMs = null;
+            appState.upcomingAlarmOverrideNapIndex = null;
 
             scheduleEditMode = false;
             scheduleEditSaving = false;
@@ -1193,6 +1200,8 @@ document.addEventListener('DOMContentLoaded', function() {
             renderSleepSummary();
             return;
         }
+
+        if (scheduleEditBtn) scheduleEditBtn.disabled = false;
 
         if (editing) {
             validateScheduleDraft({ mutate: true });
