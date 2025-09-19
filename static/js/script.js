@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- State Management ---
     const DEFAULT_ALARM_LEAD_SEC = 20 * 60;
+    const DEFAULT_CLIENT_LEAD_SEC = 60;
     const DEFAULT_END_REMINDER_LEAD_SEC = 20 * 60;
     const END_REMINDER_OPTIONS = [
         { label: 'Off', value: 0 },
@@ -514,6 +515,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const alarmAudio = document.getElementById('alarm-audio');
     const napReminderSoundToggle = document.getElementById('nap-reminder-sound-toggle');
     const napAudioHint = document.getElementById('nap-audio-hint');
+    const napAlarmNextTime = document.getElementById('nap-next-time');
+    const napAlarmFireTime = document.getElementById('nap-alarm-fire-time');
+    const napAlarmFireDot = document.getElementById('nap-alarm-fire-dot');
+    const napAlarmRemaining = document.getElementById('nap-alarm-remaining');
+    const napAlarmLead = document.getElementById('nap-alarm-lead');
+    const napAlarmContext = document.getElementById('nap-alarm-context');
+    const alarmSoundToggle = document.getElementById('alarm-sound-toggle');
+    const alarmSoundSelect = document.getElementById('alarm-sound-select');
+    const alarmSoundTest = document.getElementById('alarm-sound-test');
     const ariaLiveRegion = document.getElementById('aria-live-region');
     const endReminderModal = document.getElementById('end-reminder-modal');
     const endReminderModalOptions = document.getElementById('end-reminder-options');
@@ -539,6 +549,21 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (error) {
         console.warn('Unable to read sound preference', error);
     }
+
+    let storedLeadTimeSec = DEFAULT_CLIENT_LEAD_SEC;
+    try {
+        const storedLeadRaw = localStorage.getItem('leadTimeSec');
+        const parsedLead = Number(storedLeadRaw);
+        if (Number.isFinite(parsedLead) && parsedLead > 0) {
+            storedLeadTimeSec = parsedLead;
+        } else if (storedLeadRaw == null) {
+            localStorage.setItem('leadTimeSec', String(DEFAULT_CLIENT_LEAD_SEC));
+        }
+    } catch (error) {
+        console.warn('Unable to read lead time preference', error);
+    }
+    appState.globalEndReminderSec = storedLeadTimeSec;
+    appState.alarmLeadTimeSec = storedLeadTimeSec;
     updateSoundToggleControl();
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
@@ -977,6 +1002,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    if (napAlarmLead) {
+        napAlarmLead.addEventListener('change', (event) => {
+            const value = Number(event.target.value);
+            if (Number.isFinite(value) && value > 0) {
+                setLeadTimeSec(value);
+            }
+        });
+    }
+
     if (endReminderSnoozeBtn) {
         endReminderSnoozeBtn.addEventListener('click', () => {
             snoozeEndReminder();
@@ -1164,7 +1198,19 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Failed to fetch end reminder setting:', error);
             appState.globalEndReminderSec = DEFAULT_END_REMINDER_LEAD_SEC;
         } finally {
-            appState.alarmLeadTimeSec = appState.globalEndReminderSec;
+            let persistedLead = null;
+            try {
+                const stored = Number(localStorage.getItem('leadTimeSec'));
+                if (Number.isFinite(stored) && stored > 0) {
+                    persistedLead = stored;
+                }
+            } catch (error) {
+                console.warn('Unable to read persisted lead time', error);
+            }
+
+            const finalLead = Number.isFinite(persistedLead) ? persistedLead : Number(appState.globalEndReminderSec) || DEFAULT_CLIENT_LEAD_SEC;
+            appState.globalEndReminderSec = finalLead;
+            appState.alarmLeadTimeSec = finalLead;
             scheduleNapReminder();
         }
     }
@@ -1555,6 +1601,56 @@ document.addEventListener('DOMContentLoaded', function() {
             if (awakeBudgetBar) awakeBudgetBar.style.width = '0%';
         }
 
+        const napEventTime = babyAsleep
+            ? (appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime()) ? appState.currentNapProjectedEnd : null)
+            : (appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime()) ? appState.nextNapPlannedStart : null);
+
+        const contextLabel = babyAsleep ? 'before nap ends' : 'before nap';
+        if (napAlarmContext) napAlarmContext.textContent = contextLabel;
+        if (napAlarmNextTime) {
+            napAlarmNextTime.textContent = napEventTime ? formatTime(napEventTime) : '—';
+        }
+
+        if (napAlarmLead && napAlarmLead.value !== String(getLeadTimeSec()) && napAlarmLead.querySelector(`option[value="${getLeadTimeSec()}"]`)) {
+            napAlarmLead.value = String(getLeadTimeSec());
+        }
+
+        const fireInfo = computeFireTime(babyAsleep ? 'asleep' : 'awake');
+        const eventAvailable = Boolean(napEventTime) && fireInfo.valid;
+
+        setNapAlarmControlsEnabled(eventAvailable);
+
+        if (napAlarmFireTime) {
+            napAlarmFireTime.textContent = fireInfo.valid && fireInfo.fireTime ? formatLocalTime(fireInfo.fireTime) : '—';
+        }
+
+        if (napAlarmRemaining) {
+            if (fireInfo.valid && fireInfo.fireTime) {
+                if (fireInfo.autoAdjusted) {
+                    napAlarmRemaining.textContent = `auto-adjusted to ${Math.max(0, fireInfo.leadSec)} sec`;
+                } else {
+                    napAlarmRemaining.textContent = `fires in ${formatRemaining(fireInfo.remainingMs)}`;
+                }
+            } else {
+                napAlarmRemaining.textContent = '—';
+            }
+        }
+
+        if (napAlarmFireDot) {
+            if (fireInfo.valid && fireInfo.fireTime && fireInfo.fireTime.getTime() > nowMs()) {
+                napAlarmFireDot.classList.remove('bg-gray-300', 'opacity-30');
+                napAlarmFireDot.classList.add('bg-emerald-500');
+            } else {
+                napAlarmFireDot.classList.remove('bg-emerald-500');
+                napAlarmFireDot.classList.add('bg-gray-300', 'opacity-30');
+            }
+        }
+
+        if (!eventAvailable) {
+            if (napAlarmFireTime) napAlarmFireTime.textContent = '—';
+            if (napAlarmRemaining) napAlarmRemaining.textContent = '—';
+        }
+
         if (napControlBtn) {
             napControlBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'bg-green-500', 'hover:bg-green-600', 'opacity-50', 'cursor-not-allowed');
             let helperMessage = '';
@@ -1617,6 +1713,7 @@ document.addEventListener('DOMContentLoaded', function() {
             summaryTicker = setInterval(updateTodaySummary, 60000);
         }
 
+        updateSoundToggleControl();
         scheduleNapReminder();
     }
 
@@ -2114,18 +2211,139 @@ document.addEventListener('DOMContentLoaded', function() {
         return minutes === 1 ? '1 min' : `${minutes} min`;
     }
 
-    function formatLeadToast(seconds) {
-        if (!Number.isFinite(seconds) || seconds < 0) return '0 s';
-        if (seconds < 60) return `${Math.round(seconds)} s`;
-        const minutes = Math.max(1, Math.round(seconds / 60));
-        return minutes === 1 ? '1 min' : `${minutes} min`;
-    }
-
     function formatDurationValue(seconds) {
         if (!Number.isFinite(seconds) || seconds <= 0) return 'Off';
         if (seconds < 60) return `${seconds} s`;
         const minutes = seconds / 60;
         return minutes === 1 ? '1 min' : `${minutes} min`;
+    }
+
+    function formatLocalTime(date) {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '—';
+        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function formatRemaining(milliseconds) {
+        if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '0 sec';
+        const seconds = Math.round(milliseconds / 1000);
+        if (seconds < 60) return `${seconds} sec`;
+        const minutes = Math.round(seconds / 60);
+        return minutes === 1 ? '1 min' : `${minutes} min`;
+    }
+
+    function setNapAlarmControlsEnabled(enabled) {
+        const disable = !enabled;
+
+        const controlToggles = [alarmSoundToggle, alarmSoundTest];
+        controlToggles.forEach((button) => {
+            if (!button) return;
+            button.disabled = disable;
+            button.setAttribute('aria-disabled', disable ? 'true' : 'false');
+            button.classList.toggle('opacity-50', disable);
+            button.classList.toggle('cursor-not-allowed', disable);
+        });
+
+        [alarmSoundSelect, napAlarmLead].forEach((selectEl) => {
+            if (!selectEl) return;
+            selectEl.disabled = disable;
+            selectEl.setAttribute('aria-disabled', disable ? 'true' : 'false');
+            selectEl.classList.toggle('opacity-50', disable);
+            selectEl.classList.toggle('cursor-not-allowed', disable);
+        });
+
+        if (napAlarmFireDot) {
+            napAlarmFireDot.classList.toggle('opacity-30', disable);
+        }
+    }
+
+    function getLeadTimeSec() {
+        const lead = Number(appState.alarmLeadTimeSec);
+        if (Number.isFinite(lead) && lead > 0) return lead;
+        return DEFAULT_CLIENT_LEAD_SEC;
+    }
+
+    function setLeadTimeSec(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        appState.alarmLeadTimeSec = parsed;
+        appState.globalEndReminderSec = parsed;
+        try {
+            localStorage.setItem('leadTimeSec', String(parsed));
+        } catch (error) {
+            console.warn('Unable to persist lead time preference', error);
+        }
+        if (napAlarmLead && napAlarmLead.querySelector(`option[value="${parsed}"]`)) {
+            napAlarmLead.value = String(parsed);
+        }
+        renderSleepSummary();
+        scheduleNapReminder();
+        renderReminderRow();
+    }
+
+    function computeFireTime(context) {
+        const leadSecRequested = getLeadTimeSec();
+        const now = nowMs();
+
+        let eventDate = null;
+        let leadSec = leadSecRequested;
+
+        if (context === 'asleep') {
+            if (appState.currentNapProjectedEnd instanceof Date && !Number.isNaN(appState.currentNapProjectedEnd?.getTime())) {
+                eventDate = appState.currentNapProjectedEnd;
+            }
+        } else {
+            if (appState.nextNapPlannedStart instanceof Date && !Number.isNaN(appState.nextNapPlannedStart?.getTime())) {
+                eventDate = appState.nextNapPlannedStart;
+            }
+        }
+
+        if (!(eventDate instanceof Date) || Number.isNaN(eventDate?.getTime()) || eventDate.getTime() <= now) {
+            return {
+                context,
+                valid: false,
+                event: null,
+                fireTime: null,
+                remainingMs: null,
+                leadSec: null,
+                autoAdjusted: false,
+            };
+        }
+
+        if (!Number.isFinite(leadSec) || leadSec < 0) {
+            leadSec = 0;
+        }
+
+        let fireMs = eventDate.getTime() - leadSec * 1000;
+        let autoAdjusted = false;
+
+        if (!Number.isFinite(fireMs)) {
+            fireMs = eventDate.getTime();
+            autoAdjusted = true;
+        }
+
+        if (fireMs < now) {
+            fireMs = now;
+            autoAdjusted = true;
+        }
+
+        if (fireMs > eventDate.getTime()) {
+            fireMs = eventDate.getTime();
+            autoAdjusted = true;
+        }
+
+        const remainingMs = Math.max(0, fireMs - now);
+        const effectiveLeadSec = Math.max(0, Math.round((eventDate.getTime() - fireMs) / 1000));
+
+        return {
+            context,
+            valid: true,
+            event: eventDate,
+            fireTime: new Date(fireMs),
+            remainingMs,
+            leadSec: effectiveLeadSec,
+            requestedLeadSec: leadSecRequested,
+            autoAdjusted,
+        };
     }
 
     function computeScheduleSignature(naps) {
@@ -2549,7 +2767,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const subtitle = document.createElement('p');
         subtitle.className = 'mt-1 text-xs text-gray-600';
         const subtitleSuffix = normalizedContext === 'end' ? 'before end' : 'before next nap';
-        subtitle.textContent = `${formatLeadToast(leadSec)} ${subtitleSuffix}`;
+        subtitle.textContent = `${leadSec >= 0 ? formatLeadShort(leadSec) : '—'} ${subtitleSuffix}`;
 
         const actions = document.createElement('div');
         actions.className = 'mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end';
@@ -2742,18 +2960,24 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateSoundToggleControl() {
-        if (!napReminderSoundToggle) return;
+        const hintShouldShow = alarmAudioUnlockFailed && appState.soundEnabled;
 
-        if (appState.scheduleError) {
-            napReminderSoundToggle.classList.add('hidden');
-        } else {
-            napReminderSoundToggle.classList.remove('hidden');
+        if (napReminderSoundToggle) {
+            if (appState.scheduleError) {
+                napReminderSoundToggle.classList.add('hidden');
+            } else {
+                napReminderSoundToggle.classList.remove('hidden');
+            }
+            napReminderSoundToggle.textContent = appState.soundEnabled ? 'Sound on' : 'Sound off';
         }
 
-        napReminderSoundToggle.textContent = appState.soundEnabled ? 'Sound on' : 'Sound off';
+        if (alarmSoundToggle) {
+            alarmSoundToggle.textContent = appState.soundEnabled ? 'On' : 'Off';
+            alarmSoundToggle.setAttribute('aria-pressed', appState.soundEnabled ? 'true' : 'false');
+        }
 
         if (napAudioHint) {
-            if (alarmAudioUnlockFailed && appState.soundEnabled) {
+            if (hintShouldShow) {
                 napAudioHint.classList.remove('hidden');
             } else {
                 napAudioHint.classList.add('hidden');
