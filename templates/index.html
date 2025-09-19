@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <title>Nap Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%237c3aed'/%3E%3Cpath fill='%23ffffff' d='M9 8h6v2h-4v2h4v2H9v-2h4v-2H9Z'/%3E%3C/svg%3E" />
   <!-- Dev: CDN is fine. (For prod, build Tailwind) -->
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -57,6 +58,57 @@
         </div>
         <div class="mt-2 h-3 rounded-full bg-gray-200">
           <div id="awake-budget-bar" class="h-full rounded-full bg-emerald-500" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <div id="nap-alarm-panel" class="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-sm font-semibold text-indigo-700">Nap Alarm</p>
+            <p class="text-xs text-indigo-500">Get notified before nap time</p>
+          </div>
+          <span class="text-indigo-500" aria-hidden="true">🔔</span>
+        </div>
+
+        <div id="nap-alarm-timing" class="mt-4 rounded-xl bg-white/80 p-3 shadow-inner">
+          <div class="flex items-center justify-between text-sm text-gray-700">
+            <span>Next nap</span>
+            <span id="nap-next-time" class="font-semibold text-gray-900">—</span>
+          </div>
+          <div class="mt-2 flex items-center justify-between text-sm text-gray-700">
+            <span>Alarm fires at</span>
+            <div class="flex items-center gap-2">
+              <span id="nap-alarm-fire-dot" class="h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span id="nap-alarm-fire-time" class="font-semibold text-gray-900">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="nap-alarm-sound-row" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700">
+          <span class="font-medium text-indigo-600">Sound</span>
+          <div class="flex flex-wrap items-center gap-3">
+            <button id="alarm-sound-toggle" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-sm font-semibold text-indigo-600">On</button>
+            <select id="alarm-sound-select" class="w-32 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm text-gray-700">
+              <option>Chirp</option>
+              <option>Marimba</option>
+              <option>Bell</option>
+            </select>
+            <button id="alarm-sound-test" type="button" class="text-sm font-semibold text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">Test</button>
+          </div>
+        </div>
+
+        <div id="nap-alarm-controls" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700">
+          <span class="text-indigo-600">Notify me</span>
+          <select id="nap-alarm-lead" class="w-36 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm text-gray-700">
+            <option>30 seconds</option>
+            <option>1 minute</option>
+            <option>5 minutes</option>
+            <option>10 minutes</option>
+            <option>15 minutes</option>
+            <option>20 minutes</option>
+            <option>30 minutes</option>
+          </select>
+          <span id="nap-alarm-context" class="text-indigo-600">before nap</span>
         </div>
       </div>
 
