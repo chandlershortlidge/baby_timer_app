@@ -1376,7 +1376,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         renderSleepSummary();
         if (!editing) {
-            renderNapAlarmChip();
+            renderNextNapAlarmChip();
         }
         updateSoundToggleControl();
     }
@@ -1397,11 +1397,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const startText = displayStart ? formatTime(displayStart) : '—';
         const durationText = durationMin ? `(${durationMin} min)` : '';
-        const chipHtml = item.nap.status === 'upcoming'
-            ? '<span class="container nap-chip hidden inline-flex w-auto flex-none items-center gap-1 rounded-full border border-gray-200 bg-white/70 px-2 py-0.5 text-xs font-medium leading-tight text-gray-600">⏰</span>'
-            : '';
-
-        const editButtonHtml = `<button data-nap-index="${item.nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>`;
+        const rightControls = `
+            <div class="flex items-center gap-2 next-alarm-slot">
+                <button data-nap-index="${item.nap.nap_index}" class="edit-nap-btn text-sm font-semibold text-blue-600 hover:text-blue-800">Edit</button>
+            </div>`;
 
         li.innerHTML = `
             <div class="flex items-center space-x-4">
@@ -1412,10 +1411,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <p class="text-xs font-medium ${statusColor}">${statusLabel}</p>
                 </div>
             </div>
-            <div class="flex items-center gap-2">
-                ${chipHtml}
-                ${editButtonHtml}
-            </div>
+            ${rightControls}
         `;
         return li;
     }
@@ -1527,59 +1523,37 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
 
-    function renderNapAlarmChip() {
-        if (!scheduleList || scheduleEditMode) return;
+    function renderNextNapAlarmChip() {
+        const existing = scheduleList ? scheduleList.querySelector('.next-alarm-chip') : null;
+        if (existing) existing.remove();
 
-        const chips = scheduleList.querySelectorAll('.nap-chip');
-        chips.forEach((chip) => {
-            chip.textContent = '⏰';
-            chip.classList.add('hidden');
-        });
+        if (!scheduleList || scheduleEditMode || !appState.soundEnabled) return;
 
-        const upcomingNap = appState.naps.find((nap) => nap.status === 'upcoming');
-        if (!upcomingNap) return;
-
-        if (appState.upcomingAlarmDismissedNapIndex != null && upcomingNap.nap_index === appState.upcomingAlarmDismissedNapIndex) {
+        const upcoming = appState.naps.find((nap) => nap.status === 'upcoming');
+        if (!upcoming || !(appState.nextNapPlannedStart instanceof Date) || Number.isNaN(appState.nextNapPlannedStart?.getTime())) {
             return;
         }
 
-        let effectiveLead = null;
-
-        if (
-            appState.upcomingAlarmOverrideNapIndex === upcomingNap.nap_index &&
-            Number.isFinite(appState.upcomingAlarmOverrideMs) &&
-            appState.nextNapPlannedStart instanceof Date &&
-            !Number.isNaN(appState.nextNapPlannedStart?.getTime())
-        ) {
-            effectiveLead = Math.max(0, Math.round((appState.nextNapPlannedStart.getTime() - appState.upcomingAlarmOverrideMs) / 1000));
+        if (getLeadTimeSec() <= 0) {
+            return;
         }
 
-        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) {
-            if (appState.endReminderOverrideNapIndex != null && upcomingNap.nap_index === appState.endReminderOverrideNapIndex) {
-                const overrideLead = Number(appState.endReminderSecOverride);
-                if (Number.isFinite(overrideLead)) {
-                    effectiveLead = overrideLead;
-                }
-            }
+        const fireInfo = computeFireTime('awake');
+        if (!fireInfo.valid || !fireInfo.fireTime) {
+            return;
         }
 
-        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) {
-            const globalLead = Number(appState.globalEndReminderSec);
-            if (Number.isFinite(globalLead)) {
-                effectiveLead = globalLead;
-            }
-        }
+        const slot = scheduleList.querySelector(`[data-nap-index="${upcoming.nap_index}"] .next-alarm-slot`);
+        if (!slot) return;
 
-        if (!Number.isFinite(effectiveLead) || effectiveLead <= 0) return;
+        const pill = document.createElement('span');
+        pill.className = 'next-alarm-chip inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-xs font-semibold text-indigo-600';
+        pill.textContent = `⏰ ${formatLeadChip(fireInfo.leadSec) || '⏰'}`;
+        const fireLabel = formatLocalTime(fireInfo.fireTime);
+        pill.setAttribute('aria-label', `Alarm fires at ${fireLabel}`);
+        pill.title = `Alarm fires at ${fireLabel}`;
 
-        const targetItem = scheduleList.querySelector(`[data-nap-index="${upcomingNap.nap_index}"] .nap-chip`);
-        if (!targetItem) return;
-
-        const label = formatLeadChip(effectiveLead);
-        if (!label) return;
-
-        targetItem.textContent = `⏰ ${label}`;
-        targetItem.classList.remove('hidden');
+        slot.insertBefore(pill, slot.firstChild);
     }
 
     function renderSleepSummary() {
@@ -1976,7 +1950,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function renderReminderRow() {
-        renderNapAlarmChip();
+        renderNextNapAlarmChip();
     }
 
     function scheduleEndReminder() {
@@ -3036,6 +3010,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 napAudioHint.classList.add('hidden');
             }
         }
+
+        renderNextNapAlarmChip();
     }
 
     function unlockAlarmAudioOnce() {
