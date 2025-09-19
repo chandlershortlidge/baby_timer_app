@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, current_app
 
 # Import the configuration
@@ -9,6 +9,100 @@ from .config import Config
 DEFAULT_AWAKE_BUDGET_SEC = 10 * 60 * 60
 DEFAULT_NAP_ALARM_LEAD_SEC = 20 * 60
 DEFAULT_NAP_END_REMINDER_LEAD_SEC = 20 * 60
+DEFAULT_WAKE_WINDOWS_MIN = [120, 150, 150, 180]
+MIN_NAP_DURATION_MIN = 20
+MAX_NAP_DURATION_MIN = 180
+MAX_UPCOMING_NAPS = 6
+
+
+def parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        string_value = value
+        if isinstance(value, str) and value.endswith('Z'):
+            string_value = value.replace('Z', '+00:00')
+        return datetime.fromisoformat(string_value)
+    except ValueError:
+        return None
+
+
+def normalize_to_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def ensure_planned_starts(conn, day_row, naps):
+    if not naps:
+        return naps
+
+    reference = parse_iso_datetime(day_row.get('first_wake_at')) or datetime.now()
+    updated = False
+
+    for idx, nap in enumerate(naps):
+        duration_sec = nap.get('adjusted_duration_sec') or nap.get('planned_duration_sec') or 0
+        planned_start = parse_iso_datetime(nap.get('planned_start_at'))
+        actual_start = parse_iso_datetime(nap.get('actual_start_at'))
+        actual_end = parse_iso_datetime(nap.get('actual_end_at'))
+
+        if planned_start:
+            reference = planned_start + timedelta(seconds=duration_sec)
+            continue
+
+        if nap.get('status') in ('finished', 'in_progress') and actual_start:
+            reference = actual_end or (actual_start + timedelta(seconds=duration_sec))
+            continue
+
+        wake_window = DEFAULT_WAKE_WINDOWS_MIN[idx] if idx < len(DEFAULT_WAKE_WINDOWS_MIN) else DEFAULT_WAKE_WINDOWS_MIN[-1]
+        start_dt = reference + timedelta(minutes=wake_window)
+        nap['planned_start_at'] = start_dt.isoformat()
+        conn.execute('UPDATE nap_slots SET planned_start_at = ? WHERE id = ?', (nap['planned_start_at'], nap['id']))
+        updated = True
+        reference = start_dt + timedelta(seconds=duration_sec)
+
+    if updated:
+        conn.commit()
+
+    return naps
+
+
+def recalculate_projected_bedtime(conn, day_row):
+    first_wake = parse_iso_datetime(day_row.get('first_wake_at'))
+    if not first_wake:
+        conn.execute('UPDATE days SET projected_bedtime_at = NULL WHERE id = ?', (day_row['id'],))
+        return None
+
+    awake_budget = day_row.get('daily_awake_budget_sec') or DEFAULT_AWAKE_BUDGET_SEC
+    naps_cursor = conn.execute(
+        'SELECT planned_duration_sec, adjusted_duration_sec, actual_start_at, actual_end_at, status FROM nap_slots WHERE day_id = ?',
+        (day_row['id'],)
+    )
+    total_nap_sec = 0
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+
+    for row in naps_cursor.fetchall():
+        status = row['status']
+        planned = row['planned_duration_sec'] or 0
+        adjusted = row['adjusted_duration_sec']
+        duration_sec = adjusted if adjusted is not None else planned
+        actual_start = normalize_to_utc(parse_iso_datetime(row['actual_start_at']))
+        actual_end = normalize_to_utc(parse_iso_datetime(row['actual_end_at']))
+
+        if status == 'finished' and actual_start and actual_end:
+            total_nap_sec += max(0, int((actual_end - actual_start).total_seconds()))
+        elif status == 'in_progress' and actual_start:
+            total_nap_sec += max(0, int((now_utc - actual_start).total_seconds()))
+        else:
+            total_nap_sec += max(0, int(duration_sec))
+
+    anchor = normalize_to_utc(first_wake)
+    projected = anchor + timedelta(seconds=max(0, int(awake_budget)) + total_nap_sec)
+    conn.execute('UPDATE days SET projected_bedtime_at = ? WHERE id = ?', (projected.isoformat(), day_row['id']))
+    return projected.isoformat()
+
 
 def get_db_connection():
     """Establishes a connection to the database and sets the row factory."""
@@ -77,6 +171,7 @@ def create_db(app):
             day_id INTEGER NOT NULL,
             nap_index INTEGER NOT NULL,
             planned_duration_sec INTEGER NOT NULL,
+            planned_start_at TEXT,
             adjusted_duration_sec INTEGER, -- This will be updated by the schedule adjustment logic.
             actual_start_at TEXT,
             actual_end_at TEXT,
@@ -84,6 +179,11 @@ def create_db(app):
             FOREIGN KEY (day_id) REFERENCES days (id)
         )
     ''')
+
+    try:
+        c.execute('ALTER TABLE nap_slots ADD COLUMN planned_start_at TEXT')
+    except sqlite3.OperationalError:
+        pass
 
     # Track bedtime sessions to calculate overnight sleep duration.
     c.execute('''
@@ -229,6 +329,7 @@ def create_app(test_config=None):
                 (day_id,)
             )
             naps_data = [dict(row) for row in naps_cursor.fetchall()]
+            naps_data = ensure_planned_starts(conn, day_data, naps_data)
 
             response_data = {
                 "day": day_data,
@@ -338,11 +439,21 @@ def create_app(test_config=None):
                         {'index': 3, 'duration_min': 30},
                     ]
 
-                    for nap in default_nap_plan:
+                    start_reference = parse_iso_datetime(timestamp) or datetime.now()
+                    last_end = start_reference
+
+                    for idx, nap in enumerate(default_nap_plan):
+                        wake_window = DEFAULT_WAKE_WINDOWS_MIN[idx] if idx < len(DEFAULT_WAKE_WINDOWS_MIN) else DEFAULT_WAKE_WINDOWS_MIN[-1]
+                        start_dt = last_end + timedelta(minutes=wake_window)
+                        planned_duration_sec = nap['duration_min'] * 60
+                        end_dt = start_dt + timedelta(seconds=planned_duration_sec)
+
                         conn.execute('''
-                            INSERT INTO nap_slots (day_id, nap_index, planned_duration_sec)
-                            VALUES (?, ?, ?)
-                        ''', (day_id, nap['index'], nap['duration_min'] * 60))
+                            INSERT INTO nap_slots (day_id, nap_index, planned_duration_sec, planned_start_at)
+                            VALUES (?, ?, ?, ?)
+                        ''', (day_id, nap['index'], planned_duration_sec, start_dt.isoformat()))
+
+                        last_end = end_dt
 
                 return {"status": "success", "message": f"Wake time for {today_str} logged and nap schedule initialized."}
             except sqlite3.Error as e:
@@ -512,6 +623,133 @@ def create_app(test_config=None):
         finally:
             if conn:
                 conn.close()
+
+    @app.route('/api/schedule/today', methods=['PATCH'])
+    def update_today_schedule():
+        payload = request.json or {}
+        naps_payload = payload.get('naps')
+        if not isinstance(naps_payload, list):
+            return {"status": "error", "message": "Invalid schedule payload."}, 400
+
+        if len(naps_payload) > MAX_UPCOMING_NAPS:
+            return {"status": "error", "message": "Max naps reached."}, 400
+
+        normalized = []
+        indices_seen = set()
+
+        for item in naps_payload:
+            index = item.get('index')
+            start_at = item.get('start_at')
+            duration_sec = item.get('duration_sec')
+
+            try:
+                index = int(index)
+                duration_sec = int(duration_sec)
+            except (TypeError, ValueError):
+                return {"status": "error", "message": "Invalid nap data."}, 400
+
+            if index <= 0 or index in indices_seen:
+                return {"status": "error", "message": "Invalid nap indexes."}, 400
+            indices_seen.add(index)
+
+            start_dt = parse_iso_datetime(start_at)
+            if not start_dt:
+                return {"status": "error", "message": "Invalid start time."}, 400
+
+            duration_min = duration_sec // 60
+            if duration_min < MIN_NAP_DURATION_MIN or duration_min > MAX_NAP_DURATION_MIN:
+                return {"status": "error", "message": "Durations must be 20–180 min."}, 400
+
+            normalized.append({
+                'index': index,
+                'start': start_dt,
+                'duration_sec': duration_sec,
+                'start_iso': start_dt.isoformat(),
+                'end': start_dt + timedelta(seconds=duration_sec)
+            })
+
+        normalized.sort(key=lambda item: item['start'])
+
+        for previous, current in zip(normalized, normalized[1:]):
+            if current['start'] < previous['end']:
+                return {"status": "error", "message": "Naps can't overlap."}, 400
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        conn = get_db_connection()
+        try:
+            with conn:
+                day_row = conn.execute('SELECT * FROM days WHERE date = ?', (today_str,)).fetchone()
+                if not day_row:
+                    return {"status": "error", "message": "Day not started."}, 404
+                day_id = day_row['id']
+
+                target_date = datetime.strptime(day_row['date'], '%Y-%m-%d').date()
+                for item in normalized:
+                    if item['start'].date() != target_date:
+                        return {"status": "error", "message": "Start times must be within today."}, 400
+
+                existing_rows = conn.execute('SELECT * FROM nap_slots WHERE day_id = ?', (day_id,)).fetchall()
+                status_by_index = {row['nap_index']: row for row in existing_rows}
+                current_nap_row = next((row for row in existing_rows if row['status'] == 'in_progress'), None)
+
+                if current_nap_row:
+                    now_ts = datetime.now().timestamp()
+                    for item in normalized:
+                        try:
+                            start_ts = item['start'].timestamp()
+                        except OSError:
+                            start_ts = now_ts
+                        if start_ts < now_ts:
+                            return {"status": "error", "message": "Cannot schedule earlier than current time."}, 400
+
+                for item in normalized:
+                    existing = status_by_index.get(item['index'])
+                    if existing and existing['status'] != 'upcoming':
+                        return {"status": "error", "message": "Only upcoming naps can be edited."}, 400
+
+                payload_indices = {item['index'] for item in normalized}
+                existing_upcoming = [row for row in existing_rows if row['status'] == 'upcoming']
+
+                for row in existing_upcoming:
+                    if row['nap_index'] not in payload_indices:
+                        conn.execute('DELETE FROM nap_slots WHERE id = ?', (row['id'],))
+
+                for item in normalized:
+                    existing = status_by_index.get(item['index'])
+                    if existing:
+                        conn.execute(
+                            """
+                                UPDATE nap_slots
+                                SET planned_duration_sec = ?, planned_start_at = ?, adjusted_duration_sec = NULL, status = 'upcoming'
+                                WHERE id = ?
+                            """,
+                            (item['duration_sec'], item['start_iso'], existing['id'])
+                        )
+                    else:
+                        conn.execute(
+                            """
+                                INSERT INTO nap_slots (day_id, nap_index, planned_duration_sec, planned_start_at, status)
+                                VALUES (?, ?, ?, ?, 'upcoming')
+                            """,
+                            (day_id, item['index'], item['duration_sec'], item['start_iso'])
+                        )
+
+                updated_day_row = conn.execute('SELECT * FROM days WHERE id = ?', (day_id,)).fetchone()
+                updated_day = dict(updated_day_row)
+                recalculate_projected_bedtime(conn, updated_day)
+                updated_day_row = conn.execute('SELECT * FROM days WHERE id = ?', (day_id,)).fetchone()
+                updated_day = dict(updated_day_row)
+
+                naps_cursor = conn.execute('SELECT * FROM nap_slots WHERE day_id = ? ORDER BY nap_index', (day_id,))
+                naps_data = [dict(row) for row in naps_cursor.fetchall()]
+                naps_data = ensure_planned_starts(conn, updated_day, naps_data)
+
+            return {"status": "success", "day": updated_day, "naps": naps_data}
+        except sqlite3.Error as error:
+            current_app.logger.error(f"Database error in update_today_schedule: {error}")
+            return {"status": "error", "message": "Failed to update schedule."}, 500
+        finally:
+            conn.close()
 
     @app.route('/api/settings/reminder', methods=['GET', 'PATCH'])
     def reminder_settings():
