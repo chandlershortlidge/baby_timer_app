@@ -87,7 +87,7 @@
 
         <div id="nap-alarm-sound-row" class="mt-4 flex items-center gap-3 overflow-hidden rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700" style="white-space: nowrap;">
           <span class="font-medium text-indigo-600" style="min-width: 64px;">Sound</span>
-          <span id="alarm-sound-current" class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700" style="line-height: 1.4; min-height: 28px;">Chirp</span>
+          <span id="alarm-sound-current" class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700 max-[339px]:hidden" style="line-height: 1.4; min-height: 28px;">Chirp</span>
           <button id="alarm-sound-toggle" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-sm font-semibold text-indigo-600" style="min-height: 32px;">On</button>
           <select id="alarm-sound-select" class="rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm text-gray-700" style="width: 160px; min-height: 32px;">
             <option value="chirp">Chirp</option>
@@ -117,6 +117,16 @@
         Start Nap
       </button>
       <p id="nap-helper-text" class="hidden text-sm text-gray-500">End bedtime first.</p>
+
+      <div id="wake-alarm-row" class="mt-4 border-t border-gray-200 pt-3 text-sm text-gray-700">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="font-semibold text-gray-800">Wake alarm</span>
+            <p id="wake-alarm-helper" class="text-xs text-gray-500" aria-live="polite">Available after a nap starts.</p>
+          </div>
+          <button id="wake-alarm-toggle" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-sm font-semibold text-indigo-600">On</button>
+        </div>
+      </div>
     </section>
 
     <!-- Nap timer -->

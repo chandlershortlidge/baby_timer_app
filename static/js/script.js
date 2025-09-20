@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', function() {
         upcomingAlarmOverrideNapIndex: null,
         upcomingAlarmDismissedNapIndex: null,
         soundEnabled: true,
+        wakeAlarmEnabled: true,
         alarmSound: 'chirp',
     };
     let currentlyEditingNapIndex = null;
@@ -70,6 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let scheduleEditSaving = false;
     let scheduleDraft = [];
     let currentAlarmSoundKey = null;
+    let wakeAlarmTimeout = null;
 
     const MAX_UPCOMING_NAPS = 6;
     const MIN_NAP_DURATION_MIN = 20;
@@ -458,6 +460,7 @@ document.addEventListener('DOMContentLoaded', function() {
             scheduleNapReminder();
             renderReminderRow();
             renderSleepSummary();
+            updateWakeAlarmRow();
             showToast('Schedule updated.', 'success');
             announce('Schedule updated.');
         })
@@ -513,8 +516,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const toastContainer = document.getElementById('toast-container');
     const toastRoot = document.getElementById('toast-root');
     const alarmAudio = document.getElementById('alarm-audio');
-    const napReminderSoundToggle = document.getElementById('nap-reminder-sound-toggle');
-    const napAudioHint = document.getElementById('nap-audio-hint');
     const napAlarmNextTime = document.getElementById('nap-next-time');
     const napAlarmFireTime = document.getElementById('nap-alarm-fire-time');
     const napAlarmFireDot = document.getElementById('nap-alarm-fire-dot');
@@ -525,6 +526,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const alarmSoundSelect = document.getElementById('alarm-sound-select');
     const alarmSoundTest = document.getElementById('alarm-sound-test');
     const alarmSoundCurrent = document.getElementById('alarm-sound-current');
+    const wakeAlarmRow = document.getElementById('wake-alarm-row');
+    const wakeAlarmToggle = document.getElementById('wake-alarm-toggle');
+    const wakeAlarmHelper = document.getElementById('wake-alarm-helper');
     const ariaLiveRegion = document.getElementById('aria-live-region');
     const endReminderModal = document.getElementById('end-reminder-modal');
     const endReminderModalOptions = document.getElementById('end-reminder-options');
@@ -577,6 +581,19 @@ document.addEventListener('DOMContentLoaded', function() {
         console.warn('Unable to read selected alarm sound', error);
     }
 
+    try {
+        const storedWake = localStorage.getItem('wakeAlarmEnabled');
+        if (storedWake === 'false') {
+            appState.wakeAlarmEnabled = false;
+        } else if (storedWake === 'true') {
+            appState.wakeAlarmEnabled = true;
+        } else if (storedWake == null) {
+            localStorage.setItem('wakeAlarmEnabled', appState.wakeAlarmEnabled ? 'true' : 'false');
+        }
+    } catch (error) {
+        console.warn('Unable to read wake alarm preference', error);
+    }
+
     function resolveSoundUrl(key) {
         if (!alarmAudio) return null;
         const mappedKey = key.charAt(0).toUpperCase() + key.slice(1);
@@ -599,10 +616,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    loadAlarmAudioSource();
-    if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
-        alarmSoundSelect.value = appState.alarmSound;
-    }
+loadAlarmAudioSource();
+if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
+    alarmSoundSelect.value = appState.alarmSound;
+}
+
+updateWakeAlarmRow();
     updateSoundToggleControl();
 
     // ---------- Modal helpers (lazy injection + safe lookups) ----------
@@ -1003,12 +1022,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (napAudioHint) {
-        napAudioHint.addEventListener('click', () => {
-            unlockAlarmAudioOnce();
-        });
-    }
-
     if (alarmSoundToggle) {
         alarmSoundToggle.addEventListener('click', () => {
             appState.soundEnabled = !appState.soundEnabled;
@@ -1033,6 +1046,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (alarmSoundTest) {
         alarmSoundTest.addEventListener('click', () => {
             playSoundPreview();
+        });
+    }
+
+    if (wakeAlarmToggle) {
+        wakeAlarmToggle.addEventListener('click', () => {
+            appState.wakeAlarmEnabled = !appState.wakeAlarmEnabled;
+            try {
+                localStorage.setItem('wakeAlarmEnabled', appState.wakeAlarmEnabled ? 'true' : 'false');
+            } catch (error) {
+                console.warn('Unable to persist wake alarm preference', error);
+            }
+            updateWakeAlarmRow();
+            if (appState.wakeAlarmEnabled) {
+                showToast('Wake alarm on — Chimes at nap end.', 'success');
+            } else {
+                showToast('Wake alarm off — Silent at nap end.', 'info');
+            }
         });
     }
 
@@ -1179,6 +1209,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderSchedule();
                 cancelAlarms();
                 cancelEndReminder({ skipRender: true });
+                cancelWakeAlarm();
                 if (endReminderModalOpen) {
                     closeEndReminderModal({ dueToScheduleChange: true });
                 }
@@ -1201,6 +1232,7 @@ document.addEventListener('DOMContentLoaded', function() {
         lastNapActive = napActiveNow;
 
             renderSchedule();
+            scheduleWakeAlarm();
 
             if (endReminderModalOpen) {
                 const activeNapIndex = appState.currentNap?.nap_index ?? null;
@@ -1215,6 +1247,7 @@ document.addEventListener('DOMContentLoaded', function() {
             appState.scheduleError = true;
             cancelAlarms();
             cancelEndReminder({ skipRender: true });
+            cancelWakeAlarm();
             renderSleepSummary();
             renderReminderRow();
         }
@@ -1527,14 +1560,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const existing = scheduleList ? scheduleList.querySelector('.next-alarm-chip') : null;
         if (existing) existing.remove();
 
-        if (!scheduleList || scheduleEditMode || !appState.soundEnabled) return;
-
+        if (!scheduleList || scheduleEditMode || !appState.soundEnabled || getLeadTimeSec() <= 0) return;
         const upcoming = appState.naps.find((nap) => nap.status === 'upcoming');
         if (!upcoming || !(appState.nextNapPlannedStart instanceof Date) || Number.isNaN(appState.nextNapPlannedStart?.getTime())) {
-            return;
-        }
-
-        if (getLeadTimeSec() <= 0) {
             return;
         }
 
@@ -1554,6 +1582,86 @@ document.addEventListener('DOMContentLoaded', function() {
         pill.title = `Alarm fires at ${fireLabel}`;
 
         slot.insertBefore(pill, slot.firstChild);
+    }
+
+    function updateWakeAlarmRow() {
+        if (wakeAlarmToggle) {
+            wakeAlarmToggle.textContent = appState.wakeAlarmEnabled ? 'On' : 'Off';
+            wakeAlarmToggle.setAttribute('aria-pressed', appState.wakeAlarmEnabled ? 'true' : 'false');
+            wakeAlarmToggle.setAttribute('aria-label', 'Wake alarm. Chimes at nap end.');
+        }
+
+        if (wakeAlarmHelper) {
+            if (appState.currentNap) {
+                wakeAlarmHelper.textContent = 'Chimes at nap end.';
+            } else {
+                wakeAlarmHelper.textContent = 'Available after a nap starts.';
+            }
+        }
+    }
+
+    function updateWakeAlarmHelper({ message } = {}) {
+        if (!wakeAlarmHelper) return;
+        if (message) {
+            wakeAlarmHelper.textContent = message;
+            return;
+        }
+
+        if (!appState.wakeAlarmEnabled) {
+            wakeAlarmHelper.textContent = 'Wake alarm off.';
+            return;
+        }
+
+        if (appState.currentNap) {
+            wakeAlarmHelper.textContent = 'Chimes at nap end.';
+        } else {
+            wakeAlarmHelper.textContent = 'Available after a nap starts.';
+        }
+    }
+
+    function scheduleWakeAlarm() {
+        if (!appState.wakeAlarmEnabled) {
+            cancelWakeAlarm();
+            return;
+        }
+
+        const nap = appState.currentNap;
+        if (!nap || !appState.currentNapProjectedEnd || Number.isNaN(appState.currentNapProjectedEnd?.getTime?.())) {
+            cancelWakeAlarm();
+            updateWakeAlarmHelper();
+            return;
+        }
+
+        const wakeAt = appState.currentNapProjectedEnd.getTime();
+        const now = nowMs();
+        const delay = Math.max(0, wakeAt - now);
+
+        cancelWakeAlarm({ update: false });
+
+        wakeAlarmTimeout = window.setTimeout(() => {
+            wakeAlarmTimeout = null;
+            if (!appState.wakeAlarmEnabled) return;
+            if (!appState.currentNap) return;
+
+            const fireTime = new Date();
+            updateWakeAlarmHelper({ message: `Chimes at ${formatLocalTime(fireTime)}.` });
+
+            showAlarmToast({ context: 'end', leadSec: 0, fireAt: fireTime });
+            if (appState.soundEnabled) {
+                playAlarmSound({ loop: false });
+            }
+        }, delay);
+
+        const fireTime = new Date(wakeAt);
+        updateWakeAlarmHelper({ message: `Chimes at ${formatLocalTime(fireTime)}.` });
+    }
+
+    function cancelWakeAlarm({ update = true } = {}) {
+        if (wakeAlarmTimeout) {
+            clearTimeout(wakeAlarmTimeout);
+            wakeAlarmTimeout = null;
+        }
+        if (update) updateWakeAlarmHelper();
     }
 
     function renderSleepSummary() {
@@ -1715,6 +1823,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        updateWakeAlarmRow();
+
         if (!dayStarted && !bedtimeActive) {
             stopSummaryTicker();
         } else if (!summaryTicker) {
@@ -1772,6 +1882,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!appState.currentNap) return fetchTodaySchedule();
         const napIndex = appState.currentNap.nap_index;
         stopAlarmSound();
+        cancelWakeAlarm();
         fetch('/api/naps/stop', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2165,6 +2276,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return minutes === 1 ? '1 min' : `${minutes} min`;
     }
 
+    function formatRemainingExact(milliseconds) {
+        if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '00:00';
+        const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
     function setNapAlarmControlsEnabled(enabled) {
         const disable = !enabled;
 
@@ -2212,6 +2331,8 @@ document.addEventListener('DOMContentLoaded', function() {
         renderSleepSummary();
         scheduleNapReminder();
         renderReminderRow();
+        renderNextNapAlarmChip();
+        scheduleWakeAlarm();
     }
 
     function applySoundSelection(newSound) {
@@ -2546,6 +2667,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         renderReminderRow();
+        scheduleWakeAlarm();
     }
 
     function attachBedtimeLongPress() {
@@ -2794,9 +2916,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!success) {
                 showToast("Couldn't update alarm. Try again.", 'error');
                 announce("Couldn't update alarm. Try again.");
-                alarmToastTimer = window.setTimeout(() => {
-                    clearAlarmToast();
-                }, 6000);
+                resumeTimeout();
                 return;
             }
 
@@ -2978,17 +3098,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateSoundToggleControl() {
-        const hintShouldShow = alarmAudioUnlockFailed && appState.soundEnabled;
-
-        if (napReminderSoundToggle) {
-            if (appState.scheduleError) {
-                napReminderSoundToggle.classList.add('hidden');
-            } else {
-                napReminderSoundToggle.classList.remove('hidden');
-            }
-            napReminderSoundToggle.textContent = appState.soundEnabled ? 'Sound on' : 'Sound off';
-        }
-
         if (alarmSoundToggle) {
             alarmSoundToggle.textContent = appState.soundEnabled ? 'On' : 'Off';
             alarmSoundToggle.setAttribute('aria-pressed', appState.soundEnabled ? 'true' : 'false');
@@ -3001,14 +3110,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (alarmSoundCurrent) {
             const label = appState.alarmSound ? appState.alarmSound.charAt(0).toUpperCase() + appState.alarmSound.slice(1) : 'Chirp';
             alarmSoundCurrent.textContent = label;
-        }
-
-        if (napAudioHint) {
-            if (hintShouldShow) {
-                napAudioHint.classList.remove('hidden');
-            } else {
-                napAudioHint.classList.add('hidden');
-            }
         }
 
         renderNextNapAlarmChip();
@@ -3033,7 +3134,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 alarmAudioUnlocked = true;
                 alarmAudio.loop = false;
                 alarmAudioUnlockFailed = false;
-                if (napAudioHint) napAudioHint.classList.add('hidden');
                 updateSoundToggleControl();
                 return true;
             })
@@ -3068,7 +3168,7 @@ document.addEventListener('DOMContentLoaded', function() {
         stopFallbackTone();
     }
 
-    function playAlarmSound() {
+    function playAlarmSound({ loop = true } = {}) {
         if (!alarmAudio || !appState.soundEnabled) return;
 
         loadAlarmAudioSource();
@@ -3084,11 +3184,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 alarmSoundStopTimer = null;
             }
 
-            alarmAudio.loop = true;
+            alarmAudio.loop = loop;
             try {
                 alarmAudio.currentTime = 0;
             } catch (error) {
                 console.warn('Unable to reset alarm audio time', error);
+            }
+
+            if (!loop) {
+                const handleEnded = () => {
+                    alarmAudio.removeEventListener('ended', handleEnded);
+                    stopAlarmSound();
+                };
+                alarmAudio.addEventListener('ended', handleEnded, { once: true });
             }
 
             const playPromise = alarmAudio.play();
@@ -3103,7 +3211,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             alarmSoundStopTimer = window.setTimeout(() => {
                 stopAlarmSound();
-            }, 10000);
+            }, loop ? 10000 : 5000);
         });
     }
 
