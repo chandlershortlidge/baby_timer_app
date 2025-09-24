@@ -522,10 +522,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const napAlarmRemaining = document.getElementById('nap-alarm-remaining');
     const napAlarmLead = document.getElementById('nap-alarm-lead');
     const napAlarmContext = document.getElementById('nap-alarm-context');
+    const napReminderHelper = document.getElementById('nap-reminder-helper');
     const alarmSoundToggle = document.getElementById('alarm-sound-toggle');
     const alarmSoundSelect = document.getElementById('alarm-sound-select');
     const alarmSoundTest = document.getElementById('alarm-sound-test');
-    const alarmSoundCurrent = document.getElementById('alarm-sound-current');
     const wakeAlarmRow = document.getElementById('wake-alarm-row');
     const wakeAlarmToggle = document.getElementById('wake-alarm-toggle');
     const wakeAlarmHelper = document.getElementById('wake-alarm-helper');
@@ -1049,22 +1049,86 @@ updateWakeAlarmRow();
         });
     }
 
+    // WAKE-ALARM TOGGLE START
+    const hydrateWakeAlarmPreference = () => {
+        try {
+            const stored = localStorage.getItem('wakeAlarmEnabled');
+            const parsed = JSON.parse(stored ?? 'true');
+            if (typeof parsed === 'boolean') {
+                appState.wakeAlarmEnabled = parsed;
+            } else {
+                appState.wakeAlarmEnabled = Boolean(parsed);
+            }
+        } catch (error) {
+            console.warn('Unable to read wake alarm preference', error);
+            appState.wakeAlarmEnabled = true;
+        }
+    };
+
+    const reflectWakeAlarmState = () => {
+        if (wakeAlarmToggle) {
+            wakeAlarmToggle.textContent = appState.wakeAlarmEnabled ? 'On' : 'Off';
+            wakeAlarmToggle.setAttribute('aria-pressed', appState.wakeAlarmEnabled ? 'true' : 'false');
+        }
+
+        if (!wakeAlarmHelper) return;
+
+        const projectedEndValid = appState.currentNapProjectedEnd instanceof Date
+            && !Number.isNaN(appState.currentNapProjectedEnd?.getTime?.());
+        const napActive = Boolean(appState.currentNap) && projectedEndValid;
+
+        if (!napActive) {
+            wakeAlarmHelper.textContent = 'Available after a nap starts.';
+            return;
+        }
+
+        if (!appState.wakeAlarmEnabled) {
+            wakeAlarmHelper.textContent = 'Off';
+            return;
+        }
+
+        const fireAt = appState.currentNapProjectedEnd;
+        const remainingMs = Math.max(0, fireAt.getTime() - nowMs());
+        const fireLabel = formatLocalTime(fireAt);
+        const remainingLabel = formatRemainingExact(remainingMs);
+        wakeAlarmHelper.textContent = `fires at ${fireLabel} • in ${remainingLabel}`;
+    };
+
+    hydrateWakeAlarmPreference();
+    reflectWakeAlarmState();
+
+    if (typeof updateWakeAlarmRow === 'function') {
+        const originalUpdateWakeAlarmRow = updateWakeAlarmRow;
+        updateWakeAlarmRow = function (...args) {
+            const result = originalUpdateWakeAlarmRow.apply(this, args);
+            reflectWakeAlarmState();
+            return result;
+        };
+    }
+
+    if (typeof renderSleepSummary === 'function') {
+        const originalRenderSleepSummary = renderSleepSummary;
+        renderSleepSummary = function (...args) {
+            const result = originalRenderSleepSummary.apply(this, args);
+            reflectWakeAlarmState();
+            return result;
+        };
+    }
+
     if (wakeAlarmToggle) {
         wakeAlarmToggle.addEventListener('click', () => {
-            appState.wakeAlarmEnabled = !appState.wakeAlarmEnabled;
+            const nextState = !appState.wakeAlarmEnabled;
+            appState.wakeAlarmEnabled = nextState;
             try {
-                localStorage.setItem('wakeAlarmEnabled', appState.wakeAlarmEnabled ? 'true' : 'false');
+                localStorage.setItem('wakeAlarmEnabled', nextState ? 'true' : 'false');
             } catch (error) {
                 console.warn('Unable to persist wake alarm preference', error);
             }
-            updateWakeAlarmRow();
-            if (appState.wakeAlarmEnabled) {
-                showToast('Wake alarm on — Chimes at nap end.', 'success');
-            } else {
-                showToast('Wake alarm off — Silent at nap end.', 'info');
-            }
+            reflectWakeAlarmState();
+            scheduleWakeAlarm();
         });
     }
+    // WAKE-ALARM TOGGLE END
 
     if (napAlarmLead) {
         napAlarmLead.addEventListener('change', (event) => {
@@ -1210,6 +1274,7 @@ updateWakeAlarmRow();
                 cancelAlarms();
                 cancelEndReminder({ skipRender: true });
                 cancelWakeAlarm();
+                scheduleWakeAlarm();
                 if (endReminderModalOpen) {
                     closeEndReminderModal({ dueToScheduleChange: true });
                 }
@@ -1600,69 +1665,91 @@ updateWakeAlarmRow();
         }
     }
 
-    function updateWakeAlarmHelper({ message } = {}) {
-        if (!wakeAlarmHelper) return;
-        if (message) {
-            wakeAlarmHelper.textContent = message;
-            return;
-        }
-
-        if (!appState.wakeAlarmEnabled) {
-            wakeAlarmHelper.textContent = 'Wake alarm off.';
-            return;
-        }
-
-        if (appState.currentNap) {
-            wakeAlarmHelper.textContent = 'Chimes at nap end.';
-        } else {
-            wakeAlarmHelper.textContent = 'Available after a nap starts.';
-        }
-    }
+    // WAKE-ALARM SCHEDULER START
+    let wakeAlarmTimeoutId = null;
+    let wakeAlarmTickerId = null;
 
     function scheduleWakeAlarm() {
-        if (!appState.wakeAlarmEnabled) {
-            cancelWakeAlarm();
-            return;
+        if (wakeAlarmTimeoutId) {
+            clearTimeout(wakeAlarmTimeoutId);
+            wakeAlarmTimeoutId = null;
+        }
+        if (wakeAlarmTickerId) {
+            clearInterval(wakeAlarmTickerId);
+            wakeAlarmTickerId = null;
         }
 
         const nap = appState.currentNap;
-        if (!nap || !appState.currentNapProjectedEnd || Number.isNaN(appState.currentNapProjectedEnd?.getTime?.())) {
-            cancelWakeAlarm();
-            updateWakeAlarmHelper();
+        const enabled = appState.wakeAlarmEnabled === true;
+        const helper = document.getElementById('wake-alarm-helper');
+
+        if (!nap || !enabled) {
+            if (helper) helper.textContent = nap ? 'Off' : 'Available after a nap starts.';
             return;
         }
 
-        const wakeAt = appState.currentNapProjectedEnd.getTime();
-        const now = nowMs();
-        const delay = Math.max(0, wakeAt - now);
+        const durationSec = nap.adjusted_duration_sec ?? nap.planned_duration_sec;
+        const startAt = nap.actual_start_at ? new Date(nap.actual_start_at).getTime() : NaN;
 
-        cancelWakeAlarm({ update: false });
-
-        wakeAlarmTimeout = window.setTimeout(() => {
-            wakeAlarmTimeout = null;
-            if (!appState.wakeAlarmEnabled) return;
-            if (!appState.currentNap) return;
-
-            const fireTime = new Date();
-            updateWakeAlarmHelper({ message: `Chimes at ${formatLocalTime(fireTime)}.` });
-
-            showAlarmToast({ context: 'end', leadSec: 0, fireAt: fireTime });
-            if (appState.soundEnabled) {
-                playAlarmSound({ loop: false });
-            }
-        }, delay);
-
-        const fireTime = new Date(wakeAt);
-        updateWakeAlarmHelper({ message: `Chimes at ${formatLocalTime(fireTime)}.` });
-    }
-
-    function cancelWakeAlarm({ update = true } = {}) {
-        if (wakeAlarmTimeout) {
-            clearTimeout(wakeAlarmTimeout);
-            wakeAlarmTimeout = null;
+        if (!Number.isFinite(durationSec) || !Number.isFinite(startAt)) {
+            if (helper) helper.textContent = 'Available after a nap starts.';
+            return;
         }
-        if (update) updateWakeAlarmHelper();
+
+        const fireAtMs = startAt + durationSec * 1000;
+        if (!Number.isFinite(fireAtMs) || fireAtMs <= 0) {
+            if (helper) helper.textContent = 'Available after a nap starts.';
+            return;
+        }
+
+        const initialDelay = fireAtMs - Date.now();
+        const fireAt = new Date(fireAtMs);
+
+        if (initialDelay <= 0) {
+            if (helper) helper.textContent = 'firing now…';
+            return;
+        }
+
+        const updateHelper = () => {
+            if (!helper) return;
+            const msRemaining = fireAt.getTime() - Date.now();
+            if (msRemaining <= 0) {
+                helper.textContent = 'firing now…';
+                if (wakeAlarmTickerId) {
+                    clearInterval(wakeAlarmTickerId);
+                    wakeAlarmTickerId = null;
+                }
+                return;
+            }
+            const minutes = Math.floor(msRemaining / 60000);
+            const seconds = Math.floor((msRemaining % 60000) / 1000).toString().padStart(2, '0');
+            const fireLabel = fireAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            helper.textContent = `fires at ${fireLabel} • in ${minutes}:${seconds}`;
+        };
+
+        updateHelper();
+        wakeAlarmTickerId = window.setInterval(updateHelper, 1000);
+
+        wakeAlarmTimeoutId = window.setTimeout(() => {
+            if (wakeAlarmTickerId) {
+                clearInterval(wakeAlarmTickerId);
+                wakeAlarmTickerId = null;
+            }
+            if (helper) helper.textContent = 'fired just now';
+        }, initialDelay);
     }
+
+    function cancelWakeAlarm() {
+        if (wakeAlarmTimeoutId) {
+            clearTimeout(wakeAlarmTimeoutId);
+            wakeAlarmTimeoutId = null;
+        }
+        if (wakeAlarmTickerId) {
+            clearInterval(wakeAlarmTickerId);
+            wakeAlarmTickerId = null;
+        }
+    }
+    // WAKE-ALARM SCHEDULER END
 
     function renderSleepSummary() {
         if (!sleepSummaryCard || !sleepStateText || !sleepStateSubtext || !sleepStateTime) return;
@@ -1872,7 +1959,14 @@ updateWakeAlarmRow();
             console.log('API /api/naps/start response:', data);
             if (data.status === 'success') {
                 napOverNotified = false;
-                fetchTodaySchedule();
+                const refresh = fetchTodaySchedule();
+                if (refresh && typeof refresh.finally === 'function') {
+                    refresh.finally(() => scheduleWakeAlarm());
+                } else {
+                    scheduleWakeAlarm();
+                }
+            } else {
+                scheduleWakeAlarm();
             }
         })
         .catch(console.error);
@@ -1891,7 +1985,16 @@ updateWakeAlarmRow();
         .then(res => res.json())
         .then(data => {
             console.log('API /api/naps/stop response:', data);
-            if (data.status === 'success') fetchTodaySchedule();
+            if (data.status === 'success') {
+                const refresh = fetchTodaySchedule();
+                if (refresh && typeof refresh.finally === 'function') {
+                    refresh.finally(() => scheduleWakeAlarm());
+                } else {
+                    scheduleWakeAlarm();
+                }
+            } else {
+                scheduleWakeAlarm();
+            }
         })
         .catch(console.error);
     }
@@ -2143,6 +2246,9 @@ updateWakeAlarmRow();
         }
         if (!keepActions) {
             stopAlarmSound();
+        }
+        if (!keepActions) {
+            clearNapReminderHelper();
         }
         if (!skipRender) {
             renderReminderRow();
@@ -2489,6 +2595,14 @@ updateWakeAlarmRow();
         }
 
         stopAlarmSound();
+        clearNapReminderHelper();
+    }
+
+    function clearNapReminderHelper() {
+        if (napReminderHelper) {
+            napReminderHelper.textContent = '';
+            napReminderHelper.classList.add('hidden');
+        }
     }
 
     function scheduleUpcomingAlarm() {
@@ -2617,6 +2731,7 @@ updateWakeAlarmRow();
 
         scheduleUpcomingAlarm();
         renderReminderRow();
+        clearNapReminderHelper();
 
         const scheduled = appState.upcomingAlarmScheduledAt instanceof Date && !Number.isNaN(appState.upcomingAlarmScheduledAt?.getTime());
         const dismissedForNap = appState.nextNap && appState.upcomingAlarmDismissedNapIndex === appState.nextNap.nap_index;
@@ -2642,6 +2757,7 @@ updateWakeAlarmRow();
         appState.upcomingAlarmDismissedNapIndex = appState.nextNap.nap_index;
         cancelAlarms();
         renderReminderRow();
+        clearNapReminderHelper();
 
         logEvent('nap_alarm_dismissed', { context: 'next' });
         showToast('Reminder dismissed.', 'info');
@@ -3105,11 +3221,6 @@ updateWakeAlarmRow();
 
         if (alarmSoundSelect && AVAILABLE_SOUNDS.includes(appState.alarmSound)) {
             alarmSoundSelect.value = appState.alarmSound;
-        }
-
-        if (alarmSoundCurrent) {
-            const label = appState.alarmSound ? appState.alarmSound.charAt(0).toUpperCase() + appState.alarmSound.slice(1) : 'Chirp';
-            alarmSoundCurrent.textContent = label;
         }
 
         renderNextNapAlarmChip();

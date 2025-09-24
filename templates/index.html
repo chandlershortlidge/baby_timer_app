@@ -85,16 +85,15 @@
           <p id="nap-alarm-remaining" class="mt-1 text-xs text-indigo-600">&nbsp;</p>
         </div>
 
-        <div id="nap-alarm-sound-row" class="mt-4 flex items-center gap-3 overflow-hidden rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700" style="white-space: nowrap;">
-          <span class="font-medium text-indigo-600" style="min-width: 64px;">Sound</span>
-          <span id="alarm-sound-current" class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700 max-[339px]:hidden" style="line-height: 1.4; min-height: 28px;">Chirp</span>
-          <button id="alarm-sound-toggle" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-sm font-semibold text-indigo-600" style="min-height: 32px;">On</button>
-          <select id="alarm-sound-select" class="rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm text-gray-700" style="width: 160px; min-height: 32px;">
+        <div id="nap-alarm-sound-row" class="mt-4 flex h-11 items-center gap-3 rounded-xl border border-indigo-100 bg-white px-3 text-sm text-gray-700 whitespace-nowrap">
+          <span id="nap-alarm-sound-label" class="shrink-0 font-medium text-indigo-600" style="min-width: 64px;">Sound</span>
+          <button id="alarm-sound-toggle" type="button" class="inline-flex h-8 items-center justify-center rounded-lg border border-indigo-200 px-3 text-sm font-semibold text-indigo-600 shrink-0" aria-label="Toggle alarm sound">On</button>
+          <select id="alarm-sound-select" class="h-8 w-40 shrink-0 rounded-lg border border-indigo-200 bg-white px-2 text-sm text-gray-700" aria-labelledby="nap-alarm-sound-label">
             <option value="chirp">Chirp</option>
             <option value="marimba">Marimba</option>
             <option value="bell">Bell</option>
           </select>
-          <button id="alarm-sound-test" type="button" class="ml-auto text-sm font-semibold text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">Test</button>
+          <button id="alarm-sound-test" type="button" class="ml-auto inline-flex h-8 items-center justify-center shrink-0 px-2 py-1 text-sm font-semibold text-indigo-600 underline decoration-dotted decoration-1 underline-offset-2">Test</button>
         </div>
 
         <div id="nap-alarm-controls" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-white p-3 text-sm text-gray-700">
@@ -110,6 +109,8 @@
           </select>
           <span id="nap-alarm-context" class="text-indigo-600">before nap</span>
         </div>
+
+        <p id="nap-reminder-helper" class="mt-2 hidden text-xs text-indigo-600"></p>
       </div>
 
       <button id="nap-control-btn"

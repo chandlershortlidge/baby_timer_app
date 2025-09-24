@@ -150,12 +150,6 @@ def create_db(app):
         except sqlite3.OperationalError:
             pass
 
-    default_end_reminder = str(app.config.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', DEFAULT_NAP_END_REMINDER_LEAD_SEC))
-    c.execute(
-        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING',
-        ('nap_end_reminder_lead_sec', default_end_reminder)
-    )
-
     # 'settings' stores global key/value preferences.
     c.execute('''
         CREATE TABLE IF NOT EXISTS settings (
@@ -163,6 +157,12 @@ def create_db(app):
             value TEXT
         )
     ''')
+
+    default_end_reminder = str(app.config.get('DEFAULT_NAP_END_REMINDER_LEAD_SEC', DEFAULT_NAP_END_REMINDER_LEAD_SEC))
+    c.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING',
+        ('nap_end_reminder_lead_sec', default_end_reminder)
+    )
 
     # 'nap_slots' holds the plan and actuals for each individual nap.
     c.execute('''
